@@ -34,22 +34,30 @@ type Config struct {
 	EntraClientSecret string `json:"entra_client_secret"`
 	EntraRedirectURL  string `json:"entra_redirect_url"`
 	SessionTTLHours   int    `json:"session_ttl_hours"`
-	CookieSecure      bool   `json:"cookie_secure"`
-	AuthDisabled      bool   `json:"auth_disabled"`
+	// CookieSecure defaults to true (Secure session cookie). It is a pointer so
+	// "absent" means secure; only an explicit false opts into a plain-HTTP
+	// cookie for local dev.
+	CookieSecure *bool `json:"cookie_secure"`
+	AuthDisabled bool  `json:"auth_disabled"`
 
-	// Graph mail: app-only (client-credentials) emails from a shared mailbox.
-	MailEnabled       bool   `json:"mail_enabled"`
-	GraphTenantID     string `json:"graph_tenant_id"`
-	GraphClientID     string `json:"graph_client_id"`
-	GraphClientSecret string `json:"graph_client_secret"`
-	SharedMailbox     string `json:"shared_mailbox"`
-	AlertEmails       string `json:"alert_emails"`
-	AppBaseURL        string `json:"app_base_url"`
+	// Graph mail: app-only (client-credentials) emails from a shared mailbox,
+	// using the same Entra app registration as login (Mail.Send app permission).
+	MailEnabled   bool   `json:"mail_enabled"`
+	SharedMailbox string `json:"shared_mailbox"`
+	AlertEmails   string `json:"alert_emails"`
+	AppBaseURL    string `json:"app_base_url"`
 }
 
 // EntraEnabled reports whether OIDC auth is configured and enabled.
 func (c *Config) EntraEnabled() bool {
 	return !c.AuthDisabled && c.EntraTenantID != "" && c.EntraClientID != ""
+}
+
+// CookieSecureEnabled reports whether the session cookie should carry the
+// Secure flag. It defaults to true; only an explicit "cookie_secure": false
+// opts into a plain-HTTP cookie (local dev).
+func (c *Config) CookieSecureEnabled() bool {
+	return c.CookieSecure == nil || *c.CookieSecure
 }
 
 // SessionTTL returns the session lifetime, defaulting to 8 hours.
@@ -61,8 +69,13 @@ func (c *Config) SessionTTL() time.Duration {
 }
 
 // MailConfigured reports whether Graph mail alerts are configured and enabled.
+// It reuses the Entra app registration (tenant + client id/secret) for the
+// client-credentials flow, so only the mailbox and recipients need separate
+// settings.
 func (c *Config) MailConfigured() bool {
-	return c.MailEnabled && c.GraphTenantID != "" && c.GraphClientID != "" && c.SharedMailbox != "" && c.AlertEmails != ""
+	return c.MailEnabled &&
+		c.EntraTenantID != "" && c.EntraClientID != "" && c.EntraClientSecret != "" &&
+		c.SharedMailbox != "" && c.AlertEmails != ""
 }
 
 // AlertEmailsList splits the comma-separated recipient list.

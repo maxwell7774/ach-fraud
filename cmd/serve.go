@@ -59,7 +59,7 @@ For example:
 			srv.EnableAuth(ent, &auth.SessionManager{
 				Store: d.Store,
 				TTL:   cfg.SessionTTL(),
-			}, cfg.CookieSecure)
+			}, cfg.CookieSecureEnabled())
 		}
 
 		server := &http.Server{

@@ -70,15 +70,16 @@ func open() (*pipeline.Deps, ports.Input, func(), error) {
 }
 
 // buildNotifier returns the Graph-backed email notifier when configured,
-// otherwise the no-op.
+// otherwise the no-op. Mail reuses the Entra app registration (client
+// credentials) so only the shared mailbox + recipients are configured.
 func buildNotifier(st *pgstore.Store, cfg *config.Config) ports.Notifier {
 	if !cfg.MailConfigured() {
 		return notifier.Noop{}
 	}
 	mc := graphmail.New(graphmail.Config{
-		TenantID:     cfg.GraphTenantID,
-		ClientID:     cfg.GraphClientID,
-		ClientSecret: cfg.GraphClientSecret,
+		TenantID:     cfg.EntraTenantID,
+		ClientID:     cfg.EntraClientID,
+		ClientSecret: cfg.EntraClientSecret,
 	})
 	return notifier.NewGraph(st, mc, cfg.SharedMailbox, cfg.AlertEmailsList(), cfg.AppBaseURL)
 }
