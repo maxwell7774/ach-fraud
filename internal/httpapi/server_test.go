@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/27actions/ach/internal/auth"
 	"github.com/27actions/ach/internal/domain"
 	"github.com/27actions/ach/internal/fakeports"
 	"github.com/27actions/ach/internal/notifier"
@@ -174,5 +175,281 @@ func TestActorFromRequestErrors(t *testing.T) {
 	s.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// --- auth ---
+
+type fakeEntra struct {
+	loginURL  string
+	ident     auth.Identity
+	err       error
+	exchanged string
+}
+
+func (f *fakeEntra) LoginURL(state, verifier string) string {
+	return f.loginURL + "?state=" + state
+}
+
+func (f *fakeEntra) Exchange(_ context.Context, code, verifier string) (auth.Identity, error) {
+	f.exchanged = verifier
+	return f.ident, f.err
+}
+
+func testAuthServer(t *testing.T) (*Server, *fakeports.Store, *fakeEntra) {
+	t.Helper()
+	s, st := testServer(t)
+	fe := &fakeEntra{
+		loginURL: "https://login.example/authorize",
+		ident: auth.Identity{
+			Subject: "sub-1", UPN: "alice@corp.com", Name: "Alice",
+			Roles: []string{"ACH.Processor"},
+		},
+	}
+	s.EnableAuth(fe, &auth.SessionManager{Store: st, TTL: time.Hour}, false)
+	return s, st, fe
+}
+
+func cookieOf(t *testing.T, rr *httptest.ResponseRecorder, name string) string {
+	t.Helper()
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == name {
+			return c.Value
+		}
+	}
+	t.Fatalf("cookie %s not set", name)
+	return ""
+}
+
+func TestAuthDisabledByDefault(t *testing.T) {
+	s, _ := testServer(t)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/dashboard", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("auth-disabled dashboard = %d, want 200", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/me", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("/api/auth/me when disabled = %d, want 404", rr.Code)
+	}
+}
+
+func TestAuthFullFlow(t *testing.T) {
+	s, st, fe := testAuthServer(t)
+	h := s.Handler()
+
+	// Without a session, the API is locked down.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/dashboard", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("dashboard without session = %d, want 401", rr.Code)
+	}
+
+	// Login redirects to Entra with the oauth state cookie.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/login", nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("login = %d, want 302", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc == "" || !strings.HasPrefix(loc, fe.loginURL) {
+		t.Fatalf("login location = %q", loc)
+	}
+	oauth := cookieOf(t, rr, auth.OAuthCookieName)
+	parts := strings.SplitN(oauth, "|", 2)
+	if len(parts) != 2 {
+		t.Fatalf("oauth cookie = %q", oauth)
+	}
+
+	// Callback exchanges the code, upserts the user, and issues a session.
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil).WithContext(context.Background()))
+	rr.HeaderMap.Add("Cookie", auth.OAuthCookieName+"="+oauth)
+	// re-serve with the cookie set
+	req := httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil)
+	req.AddCookie(&http.Cookie{Name: auth.OAuthCookieName, Value: oauth})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("callback = %d, want 302 (body %s)", rr.Code, rr.Body.String())
+	}
+	if fe.exchanged != parts[1] {
+		t.Fatalf("verifier passed to exchange = %q, want %q", fe.exchanged, parts[1])
+	}
+	sess := cookieOf(t, rr, auth.SessionCookieName)
+	users := st.Users()
+	if len(users) != 1 || users[0].Subject != "sub-1" || users[0].Name != "Alice" {
+		t.Fatalf("users = %+v", users)
+	}
+
+	// The session cookie now unlocks the API, and /me reports the user.
+	req = httptest.NewRequest("GET", "/api/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dashboard with session = %d, want 200", rr.Code)
+	}
+
+	req = httptest.NewRequest("GET", "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"name":"Alice"`) {
+		t.Fatalf("me = %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Logout invalidates the session; the API locks again.
+	req = httptest.NewRequest("POST", "/api/auth/logout", nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("logout = %d", rr.Code)
+	}
+	req = httptest.NewRequest("GET", "/api/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("dashboard after logout = %d, want 401", rr.Code)
+	}
+}
+
+func TestAuthStateMismatch(t *testing.T) {
+	s, _, _ := testAuthServer(t)
+	h := s.Handler()
+	req := httptest.NewRequest("GET", "/api/auth/callback?code=abc&state=wrong", nil)
+	req.AddCookie(&http.Cookie{Name: auth.OAuthCookieName, Value: "right|verifier"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("state mismatch = %d, want 400", rr.Code)
+	}
+}
+
+func TestAuthActorFromSession(t *testing.T) {
+	s, st, _ := testAuthServer(t)
+	h := s.Handler()
+
+	// Log in as Alice.
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/login", nil))
+	oauth := cookieOf(t, rr, auth.OAuthCookieName)
+	parts := strings.SplitN(oauth, "|", 2)
+	req := httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil)
+	req.AddCookie(&http.Cookie{Name: auth.OAuthCookieName, Value: oauth})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	sess := cookieOf(t, rr, auth.SessionCookieName)
+
+	// Approve a hold; the review actor must be the signed-in user.
+	holdID := seedHold(t, st)
+	body := strings.NewReader(`{}`)
+	req = httptest.NewRequest("POST", "/api/holds/"+holdID.String()+"/approve", body)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approve = %d %s", rr.Code, rr.Body.String())
+	}
+	reviews := st.Reviews()
+	if len(reviews) != 1 || reviews[0].Actor != "Alice" {
+		t.Fatalf("reviews = %+v, want actor Alice", reviews)
+	}
+}
+
+// loginAs completes the OAuth flow for a user holding the given Entra roles
+// and returns the session cookie. Each call uses a distinct subject so role
+// combinations map to distinct users.
+func loginAs(t *testing.T, s *Server, fe *fakeEntra, roles []string) string {
+	t.Helper()
+	fe.ident.Subject = "sub-" + strings.Join(roles, "-")
+	fe.ident.Roles = roles
+	h := s.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/login", nil))
+	oauth := cookieOf(t, rr, auth.OAuthCookieName)
+	parts := strings.SplitN(oauth, "|", 2)
+	req := httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil)
+	req.AddCookie(&http.Cookie{Name: auth.OAuthCookieName, Value: oauth})
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return cookieOf(t, rr, auth.SessionCookieName)
+}
+
+func withCookie(r *http.Request, sess string) *http.Request {
+	r.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
+	return r
+}
+
+func TestAuthorizationMatrix(t *testing.T) {
+	s, st, fe := testAuthServer(t)
+	holdID := seedHold(t, st)
+
+	watcher := loginAs(t, s, fe, []string{"ACH.Watcher"})
+	processor := loginAs(t, s, fe, []string{"ACH.Processor"})
+	admin := loginAs(t, s, fe, []string{"ACH.Admin"})
+
+	// Everyone can view the dashboard and holds.
+	for _, sess := range []string{watcher, processor, admin} {
+		for _, p := range []string{"/api/dashboard", "/api/holds"} {
+			rr := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), sess))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", p, rr.Code)
+			}
+		}
+	}
+
+	// Watchers may not approve/decline, and only admins see files/events.
+	for _, p := range []string{"/api/submissions", "/api/events"} {
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), watcher))
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("watcher %s = %d, want 403", p, rr.Code)
+		}
+	}
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+holdID.String()+"/approve", strings.NewReader(`{}`)), watcher))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("watcher approve = %d, want 403", rr.Code)
+	}
+
+	// Processors review holds but cannot see files/events.
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+holdID.String()+"/approve", strings.NewReader(`{}`)), processor))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("processor approve = %d %s, want 200", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/submissions", nil), processor))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("processor submissions = %d, want 403", rr.Code)
+	}
+
+	// Admins do everything.
+	adminHold := seedHold(t, st)
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+adminHold.String()+"/decline", strings.NewReader(`{}`)), admin))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin decline = %d, want 200", rr.Code)
+	}
+	for _, p := range []string{"/api/submissions", "/api/entries", "/api/headers", "/api/events"} {
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), admin))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("admin %s = %d, want 200", p, rr.Code)
+		}
+	}
+}
+
+func TestAuthMeReportsRole(t *testing.T) {
+	s, _, fe := testAuthServer(t)
+	sess := loginAs(t, s, fe, []string{"ACH.Processor"})
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/auth/me", nil), sess))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"role":"processor"`) {
+		t.Fatalf("me = %d %s", rr.Code, rr.Body.String())
 	}
 }

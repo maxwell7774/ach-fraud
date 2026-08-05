@@ -29,6 +29,8 @@ type Store struct {
 	entries map[uuid.UUID]domain.BatchEntry
 	holds   map[uuid.UUID]domain.Hold
 	reviews []domain.Review
+	users   map[uuid.UUID]domain.User
+	sess    map[uuid.UUID]domain.Session
 	jobs    map[string]*domain.Job
 	order   []uuid.UUID
 	updated map[uuid.UUID]time.Time
@@ -52,6 +54,8 @@ func NewStore() *Store {
 		headers: map[uuid.UUID]domain.BatchHeader{},
 		entries: map[uuid.UUID]domain.BatchEntry{},
 		holds:   map[uuid.UUID]domain.Hold{},
+		users:   map[uuid.UUID]domain.User{},
+		sess:    map[uuid.UUID]domain.Session{},
 		jobs:    map[string]*domain.Job{},
 		updated: map[uuid.UUID]time.Time{},
 		artUpd:  map[uuid.UUID]time.Time{},
@@ -119,6 +123,17 @@ func (s *Store) Events() []domain.Event {
 	return out
 }
 
+// Users returns all users.
+func (s *Store) Users() []domain.User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.User, 0, len(s.users))
+	for _, u := range s.users {
+		out = append(out, u)
+	}
+	return out
+}
+
 // Job returns the job for a kind/ref pair, or nil.
 func (s *Store) Job(kind domain.JobKind, ref uuid.UUID) *domain.Job {
 	s.mu.Lock()
@@ -140,6 +155,8 @@ type storeState struct {
 	entries map[uuid.UUID]domain.BatchEntry
 	holds   map[uuid.UUID]domain.Hold
 	reviews []domain.Review
+	users   map[uuid.UUID]domain.User
+	sess    map[uuid.UUID]domain.Session
 	jobs    map[string]*domain.Job
 	order   []uuid.UUID
 	updated map[uuid.UUID]time.Time
@@ -163,6 +180,8 @@ func (s *Store) snapshot() storeState {
 		entries: maps.Clone(s.entries),
 		holds:   maps.Clone(s.holds),
 		reviews: append([]domain.Review(nil), s.reviews...),
+		users:   maps.Clone(s.users),
+		sess:    maps.Clone(s.sess),
 		jobs:    cloneJobs(s.jobs),
 		order:   append([]uuid.UUID(nil), s.order...),
 		updated: maps.Clone(s.updated),
@@ -178,6 +197,8 @@ func (s *Store) restore(snap storeState) {
 	s.entries = snap.entries
 	s.holds = snap.holds
 	s.reviews = snap.reviews
+	s.users = snap.users
+	s.sess = snap.sess
 	s.jobs = snap.jobs
 	s.order = snap.order
 	s.updated = snap.updated
@@ -866,6 +887,72 @@ func (s *Store) CreateReview(ctx context.Context, r domain.Review) error {
 	r.ID = uuid.New()
 	r.CreatedAt = time.Now()
 	s.reviews = append(s.reviews, r)
+	return nil
+}
+
+func (s *Store) UpsertUser(ctx context.Context, in domain.User) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, u := range s.users {
+		if u.Subject == in.Subject {
+			u.UPN = in.UPN
+			u.Email = in.Email
+			u.Name = in.Name
+			if in.Role != "" {
+				u.Role = in.Role
+			}
+			u.LastLogin = time.Now()
+			s.users[u.ID] = u
+			return u, nil
+		}
+	}
+	in.ID = uuid.New()
+	in.LastLogin = time.Now()
+	in.CreatedAt = time.Now()
+	if in.Role == "" {
+		in.Role = domain.RoleWatcher
+	}
+	s.users[in.ID] = in
+	return in, nil
+}
+
+func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[id]
+	if !ok {
+		return domain.User{}, domain.ErrNotFound
+	}
+	return u, nil
+}
+
+func (s *Store) CreateSession(ctx context.Context, in domain.Session) (domain.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	in.ID = uuid.New()
+	in.CreatedAt = time.Now()
+	s.sess[in.ID] = in
+	return in, nil
+}
+
+func (s *Store) GetSessionByTokenHash(ctx context.Context, tokenHash string) (domain.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sess := range s.sess {
+		if sess.TokenHash == tokenHash {
+			return sess, nil
+		}
+	}
+	return domain.Session{}, domain.ErrNotFound
+}
+
+func (s *Store) DeleteSession(ctx context.Context, id uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sess[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(s.sess, id)
 	return nil
 }
 

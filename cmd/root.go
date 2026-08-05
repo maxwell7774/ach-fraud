@@ -10,6 +10,7 @@ import (
 
 	"github.com/27actions/ach/internal/clock"
 	"github.com/27actions/ach/internal/config"
+	"github.com/27actions/ach/internal/graphmail"
 	"github.com/27actions/ach/internal/localfiles"
 	"github.com/27actions/ach/internal/localinput"
 	"github.com/27actions/ach/internal/notifier"
@@ -61,9 +62,23 @@ func open() (*pipeline.Deps, ports.Input, func(), error) {
 		Store:    st,
 		Files:    localfiles.New(cfg.ArtifactStoreDir),
 		Sender:   sender.New(cfg.OutgoingDir),
-		Notifier: notifier.Noop{},
+		Notifier: buildNotifier(st, cfg),
 		Clock:    clock.Real{},
 		Policy:   cfg.Policy(),
 	}
 	return d, localinput.New(cfg.InputDir), st.Close, nil
+}
+
+// buildNotifier returns the Graph-backed email notifier when configured,
+// otherwise the no-op.
+func buildNotifier(st *pgstore.Store, cfg *config.Config) ports.Notifier {
+	if !cfg.MailConfigured() {
+		return notifier.Noop{}
+	}
+	mc := graphmail.New(graphmail.Config{
+		TenantID:     cfg.GraphTenantID,
+		ClientID:     cfg.GraphClientID,
+		ClientSecret: cfg.GraphClientSecret,
+	})
+	return notifier.NewGraph(st, mc, cfg.SharedMailbox, cfg.AlertEmailsList(), cfg.AppBaseURL)
 }

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/27actions/ach/internal/auth"
 	"github.com/27actions/ach/internal/config"
 	"github.com/27actions/ach/internal/httpapi"
 
@@ -44,9 +45,26 @@ For example:
 		}
 		defer close()
 
+		srv := httpapi.New(*d)
+		if cfg.EntraEnabled() {
+			ent, err := auth.NewProvider(auth.Config{
+				TenantID:     cfg.EntraTenantID,
+				ClientID:     cfg.EntraClientID,
+				ClientSecret: cfg.EntraClientSecret,
+				RedirectURL:  cfg.EntraRedirectURL,
+			})
+			if err != nil {
+				return fmt.Errorf("entra auth: %w", err)
+			}
+			srv.EnableAuth(ent, &auth.SessionManager{
+				Store: d.Store,
+				TTL:   cfg.SessionTTL(),
+			}, cfg.CookieSecure)
+		}
+
 		server := &http.Server{
 			Addr:    addr,
-			Handler: httpapi.New(*d).Handler(),
+			Handler: srv.Handler(),
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

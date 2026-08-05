@@ -69,6 +69,13 @@ type Store interface {
 	CreateReview(ctx context.Context, r domain.Review) error
 	ListReviewsByHold(ctx context.Context, holdID uuid.UUID) ([]domain.Review, error)
 
+	// Auth (users + sessions)
+	UpsertUser(ctx context.Context, u domain.User) (domain.User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (domain.User, error)
+	CreateSession(ctx context.Context, s domain.Session) (domain.Session, error)
+	GetSessionByTokenHash(ctx context.Context, tokenHash string) (domain.Session, error)
+	DeleteSession(ctx context.Context, id uuid.UUID) error
+
 	// Submissions
 	ListSubmissions(ctx context.Context, status string, limit int) ([]domain.Submission, error)
 

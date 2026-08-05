@@ -5,6 +5,7 @@ import type { Hold } from "../api";
 import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
+import { canReview } from "../user";
 
 const STATUSES = ["", "pending", "approved", "declined", "auto_declined"];
 
@@ -248,7 +249,7 @@ export default function Holds() {
             </Show>
           </Show>
           <Show when={rows().length > 0}>
-          <Show when={selected().size > 0}>
+          <Show when={canReview() && selected().size > 0}>
             <div class="bulk-bar">
               <span class="selected-count">{selected().size} selected</span>
               <button class="btn btn-approve btn-sm" onClick={() => actBulk("approve")}>
@@ -262,14 +263,16 @@ export default function Holds() {
           <table class="responsive">
             <thead>
               <tr>
-                <th class="select-col">
-                  <input
-                    type="checkbox"
-                    id="selAll"
-                    checked={allChecked()}
-                    onChange={(e) => toggleAll(e.currentTarget.checked)}
-                  />
-                </th>
+                <Show when={canReview()}>
+                  <th class="select-col">
+                    <input
+                      type="checkbox"
+                      id="selAll"
+                      checked={allChecked()}
+                      onChange={(e) => toggleAll(e.currentTarget.checked)}
+                    />
+                  </th>
+                </Show>
                 <SortableTh col="filename" sort={sort()} dir={dir()} onSort={onSort}>
                   File
                 </SortableTh>
@@ -293,21 +296,25 @@ export default function Holds() {
                 </SortableTh>
                 <th>Why held</th>
                 <th>Group</th>
-                <th>Actions</th>
+                <Show when={canReview()}>
+                  <th>Actions</th>
+                </Show>
               </tr>
             </thead>
             <tbody>
               <For each={rows()}>
                 {(h) => (
                   <tr class="selectable-row">
-                    <td data-label="">
-                      <input
-                        type="checkbox"
-                        name="id"
-                        checked={selected().has(h.id)}
-                        onChange={(e) => toggle(h.id, e.currentTarget.checked)}
-                      />
-                    </td>
+                    <Show when={canReview()}>
+                      <td data-label="">
+                        <input
+                          type="checkbox"
+                          name="id"
+                          checked={selected().has(h.id)}
+                          onChange={(e) => toggle(h.id, e.currentTarget.checked)}
+                        />
+                      </td>
+                    </Show>
                     <td data-label="File" class="muted">
                       {h.filename}
                     </td>
@@ -338,15 +345,17 @@ export default function Holds() {
                         </span>
                       </Show>
                     </td>
-                    <td data-label="Actions">
-                      <Show when={h.status === "pending" || h.status === "auto_declined"}>
-                        <RowActions
-                          holdId={h.id}
-                          onApprove={() => actOne(h, "approve")}
-                          onDecline={() => actOne(h, "decline")}
-                        />
-                      </Show>
-                    </td>
+                    <Show when={canReview()}>
+                      <td data-label="Actions">
+                        <Show when={h.status === "pending" || h.status === "auto_declined"}>
+                          <RowActions
+                            holdId={h.id}
+                            onApprove={() => actOne(h, "approve")}
+                            onDecline={() => actOne(h, "decline")}
+                          />
+                        </Show>
+                      </td>
+                    </Show>
                   </tr>
                 )}
               </For>

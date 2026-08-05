@@ -4,6 +4,7 @@ import { api, dollars, fmtDateTime, fmtDate, releaseStateLabel } from "../api";
 import { Badge, Loading } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
+import { canReview } from "../user";
 import { ArrowLeftIcon, CheckIcon, XIcon } from "../icons";
 
 export default function HoldDetail() {
@@ -98,7 +99,7 @@ export default function HoldDetail() {
             )}
           </Show>
 
-          <Show when={h().status === "pending" || h().status === "auto_declined"}>
+          <Show when={canReview() && (h().status === "pending" || h().status === "auto_declined")}>
             <div class="detail-card">
               <h2>Review</h2>
               <Show when={h().group_size > 1}>

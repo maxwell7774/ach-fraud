@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/27actions/ach/internal/achp"
+	"github.com/27actions/ach/internal/auth"
 	"github.com/27actions/ach/internal/domain"
 	"github.com/27actions/ach/internal/pipeline"
 
@@ -30,29 +32,38 @@ import (
 type Server struct {
 	deps      pipeline.Deps
 	staticDir string
-	// actor resolves the reviewer identity for audit-trail entries. The auth
-	// track (argon2id + sessions) will replace this; v1 reads a header so the
-	// SPA can pass a name.
-	actor func(r *http.Request) string
+	// Auth is nil when auth is disabled (local dev/e2e), in which case the
+	// actor falls back to the X-Actor header.
+	entra        auth.Entra
+	sessions     *auth.SessionManager
+	cookieSecure bool
 }
 
 func New(d pipeline.Deps) *Server {
 	return &Server{
 		deps:      d,
 		staticDir: "web/dist",
-		actor: func(r *http.Request) string {
-			if a := r.Header.Get("X-Actor"); a != "" {
-				return a
-			}
-			return "web"
-		},
 	}
+}
+
+// EnableAuth turns on Entra session auth for the API. It must be called before
+// Handler.
+func (s *Server) EnableAuth(entra auth.Entra, sessions *auth.SessionManager, cookieSecure bool) {
+	s.entra = entra
+	s.sessions = sessions
+	s.cookieSecure = cookieSecure
 }
 
 // Handler builds the HTTP mux.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	if s.sessions != nil {
+		mux.HandleFunc("GET /api/auth/login", s.handleLogin)
+		mux.HandleFunc("GET /api/auth/callback", s.handleCallback)
+		mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+		mux.HandleFunc("GET /api/auth/me", s.handleMe)
+	}
 	mux.HandleFunc("GET /api/dashboard", s.handleDashboard)
 	mux.HandleFunc("GET /api/holds", s.handleListHolds)
 	mux.HandleFunc("GET /api/holds/{id}", s.handleGetHold)
@@ -66,8 +77,90 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/headers", s.handleListHeaders)
 	mux.HandleFunc("GET /api/artifacts/{id}/content", s.handleArtifactContent)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("/api/", http.NotFound)
 	mux.Handle("/", s.spaHandler())
-	return logRequests(mux)
+	return logRequests(s.requireAPI(mux))
+}
+
+// requireAPI guards the /api/* routes (but not /api/auth/* or /healthz) with a
+// valid session when auth is enabled, and rejects cross-origin mutations.
+func (s *Server) requireAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if s.sessions != nil && strings.HasPrefix(p, "/api/") &&
+			!strings.HasPrefix(p, "/api/auth/") && p != "/healthz" {
+			u := s.user(r)
+			if u == nil {
+				writeErr(w, http.StatusUnauthorized, errors.New("unauthorized"))
+				return
+			}
+			if !s.authorized(u, r.Method, p) {
+				writeErr(w, http.StatusForbidden, errors.New("forbidden"))
+				return
+			}
+		}
+		if s.sessions != nil && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				if o, err := url.Parse(origin); err != nil || o.Host != r.Host {
+					writeErr(w, http.StatusForbidden, errors.New("forbidden origin"))
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authorized enforces the role matrix: everyone may view the dashboard and
+// holds; watchers may not review; only admins may see files/entries/headers/
+// events/artifacts. Unknown roles are treated as watchers (least privilege).
+func (s *Server) authorized(u *domain.User, method, path string) bool {
+	if u.Role == domain.RoleAdmin {
+		return true
+	}
+	switch {
+	case path == "/api/dashboard":
+		return true
+	case strings.HasPrefix(path, "/api/holds"):
+		if method != http.MethodGet {
+			return u.Role == domain.RoleProcessor
+		}
+		return true
+	default:
+		// submissions, entries, headers, events, artifacts, verify: admin only.
+		return false
+	}
+}
+
+// user resolves the authenticated user from the session cookie, or nil.
+func (s *Server) user(r *http.Request) *domain.User {
+	if s.sessions == nil {
+		return nil
+	}
+	c, err := r.Cookie(auth.SessionCookieName)
+	if err != nil {
+		return nil
+	}
+	u, err := s.sessions.Verify(r.Context(), c.Value)
+	if err != nil {
+		return nil
+	}
+	return &u
+}
+
+// actor resolves the reviewer identity for audit-trail entries: the signed-in
+// user when auth is on, otherwise the X-Actor header (dev/e2e mode).
+func (s *Server) actor(r *http.Request) string {
+	if u := s.user(r); u != nil {
+		if u.Name != "" {
+			return u.Name
+		}
+		return u.UPN
+	}
+	if a := r.Header.Get("X-Actor"); a != "" {
+		return a
+	}
+	return "web"
 }
 
 // spaHandler serves the built SPA with history routing: real files are served
@@ -173,6 +266,112 @@ type reviewRequest struct {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- auth handlers ---
+
+// handleLogin starts the Entra authorization-code + PKCE flow, stashing the
+// state and verifier in a short-lived cookie bound to the browser.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	state, err := auth.NewToken()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	verifier, err := auth.NewToken()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.OAuthCookieName,
+		Value:    state + "|" + verifier,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cookieSecure,
+		MaxAge:   600,
+	})
+	http.Redirect(w, r, s.entra.LoginURL(state, verifier), http.StatusFound)
+}
+
+// handleCallback exchanges the code, upserts the user, and establishes the
+// session cookie.
+func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if q := r.URL.Query().Get("error"); q != "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("entra error: %s: %s", q, r.URL.Query().Get("error_description")))
+		return
+	}
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	c, err := r.Cookie(auth.OAuthCookieName)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, errors.New("missing oauth state"))
+		return
+	}
+	parts := strings.SplitN(c.Value, "|", 2)
+	if len(parts) != 2 || parts[0] != state {
+		writeErr(w, http.StatusBadRequest, errors.New("oauth state mismatch"))
+		return
+	}
+
+	id, err := s.entra.Exchange(r.Context(), code, parts[1])
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	user, err := s.deps.Store.UpsertUser(r.Context(), domain.User{
+		Subject: id.Subject,
+		UPN:     id.UPN,
+		Email:   id.Email,
+		Name:    id.Name,
+		Role:    auth.MapRole(id.Roles),
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	tok, err := s.sessions.Create(r.Context(), user.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.SessionCookieName,
+		Value:    tok,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.cookieSecure,
+		MaxAge:   int(s.sessions.TTL / time.Second),
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name: auth.OAuthCookieName, Value: "", Path: "/", HttpOnly: true, MaxAge: -1,
+	})
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// handleLogout destroys the session and clears the cookie.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(auth.SessionCookieName); err == nil {
+		_ = s.sessions.Destroy(r.Context(), c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: auth.SessionCookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleMe returns the signed-in user, or 401.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	u := s.user(r)
+	if u == nil {
+		writeErr(w, http.StatusUnauthorized, errors.New("unauthorized"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"name": u.Name, "upn": u.UPN, "email": u.Email, "role": u.Role,
+	})
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {

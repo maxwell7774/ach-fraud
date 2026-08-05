@@ -90,3 +90,69 @@ func TestListCombosBySubmission(t *testing.T) {
 		t.Fatalf("acct2 should be flagged declined: %+v", byAcct["acct2"])
 	}
 }
+
+func TestUpsertUserRoleSemantics(t *testing.T) {
+	st := NewStore()
+	ctx := context.Background()
+
+	// New user without a role defaults to the least-privileged watcher.
+	u, err := st.UpsertUser(ctx, domain.User{Subject: "sub-1", UPN: "a@corp.com", Name: "Alice", Email: "a@corp.com"})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if u.ID == uuid.Nil || u.Role != domain.RoleWatcher {
+		t.Fatalf("created user = %+v", u)
+	}
+
+	// Re-upsert with an empty role: profile refreshes, role is preserved.
+	u2, err := st.UpsertUser(ctx, domain.User{Subject: "sub-1", UPN: "a@corp.com", Name: "Alice A.", Email: "a@corp.com"})
+	if err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if u2.ID != u.ID || u2.Name != "Alice A." {
+		t.Fatalf("re-upsert = %+v", u2)
+	}
+	if u2.Role != domain.RoleWatcher {
+		t.Fatalf("role not preserved on empty: %q", u2.Role)
+	}
+
+	// Re-upsert with a role from Entra updates it.
+	u3, err := st.UpsertUser(ctx, domain.User{Subject: "sub-1", UPN: "a@corp.com", Name: "Alice A.", Email: "a@corp.com", Role: domain.RoleAdmin})
+	if err != nil {
+		t.Fatalf("role upsert: %v", err)
+	}
+	if u3.Role != domain.RoleAdmin {
+		t.Fatalf("role not updated: %q", u3.Role)
+	}
+	got, err := st.GetUserByID(ctx, u.ID)
+	if err != nil || got.Role != domain.RoleAdmin {
+		t.Fatalf("GetUserByID = %+v, %v", got, err)
+	}
+}
+
+func TestSessionsCRUD(t *testing.T) {
+	st := NewStore()
+	ctx := context.Background()
+	u, err := st.UpsertUser(ctx, domain.User{Subject: "sub-2", Name: "Bob"})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	sess, err := st.CreateSession(ctx, domain.Session{UserID: u.ID, TokenHash: "hash-1", ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, err := st.GetSessionByTokenHash(ctx, "hash-1")
+	if err != nil || got.ID != sess.ID || got.UserID != u.ID {
+		t.Fatalf("GetSessionByTokenHash = %+v, %v", got, err)
+	}
+	if _, err := st.GetSessionByTokenHash(ctx, "nope"); err != domain.ErrNotFound {
+		t.Fatalf("expected ErrNotFound for unknown hash, got %v", err)
+	}
+	if err := st.DeleteSession(ctx, sess.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := st.GetSessionByTokenHash(ctx, "hash-1"); err != domain.ErrNotFound {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+}

@@ -183,6 +183,13 @@ export interface ListParams {
   dir?: string;
 }
 
+export interface Me {
+  name: string;
+  upn: string;
+  email: string;
+  role: string;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -196,7 +203,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* not json */
     }
-    throw new Error(msg);
+    const err = new Error(msg) as Error & { status?: number };
+    err.status = res.status;
+    // A 401 on an authenticated API call means the session lapsed.
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      window.location.assign("/login");
+    }
+    throw err;
   }
   return res.json() as Promise<T>;
 }
@@ -215,6 +228,9 @@ function qs(p: ListParams): string {
 }
 
 export const api = {
+  // me returns the signed-in user; 401 = needs login, 404 = auth disabled.
+  me: () => req<Me>("/api/auth/me"),
+  logout: () => req("/api/auth/logout", { method: "POST" }),
   dashboard: () => req<Dashboard>("/api/dashboard"),
   holds: (p: ListParams = {}) => req<HoldsPage>(`/api/holds${qs(p)}`),
   hold: (id: string) => req<HoldDetail>(`/api/holds/${id}`),

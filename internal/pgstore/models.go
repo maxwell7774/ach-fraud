@@ -81,6 +81,14 @@ type Review struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Session struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	TokenHash string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type Submission struct {
 	ID             pgtype.UUID
 	Filename       string
@@ -90,4 +98,16 @@ type Submission struct {
 	ReceivedAt     pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type User struct {
+	ID          pgtype.UUID
+	Subject     string
+	Upn         string
+	Email       string
+	Name        string
+	Role        string
+	LastLoginAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }

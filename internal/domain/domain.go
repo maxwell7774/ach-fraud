@@ -139,6 +139,49 @@ type Review struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// User is an identity imported from the identity provider (Microsoft Entra).
+// Subject is the stable provider object id; profile fields are refreshed at
+// each login, while Role is managed locally.
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	Subject   string    `json:"subject"`
+	UPN       string    `json:"upn"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	LastLogin time.Time `json:"last_login_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// User roles, canonical values stored on users.role. Least privilege is the
+// default: unknown/new users are watchers.
+const (
+	RoleWatcher   = "watcher"
+	RoleProcessor = "processor"
+	RoleAdmin     = "admin"
+)
+
+// CanReview reports whether the role may approve/decline holds.
+func (u User) CanReview() bool {
+	return u.Role == RoleProcessor || u.Role == RoleAdmin
+}
+
+// IsAdmin reports whether the role may see files, entries, headers, events.
+func (u User) IsAdmin() bool {
+	return u.Role == RoleAdmin
+}
+
+// Session is a server-side login session bound to a user. TokenHash is the
+// sha256 of the raw session token stored in the user's cookie; the raw token
+// itself is never persisted.
+type Session struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash string    `json:"token_hash"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // JobKind is the unit of work the pipeline executes. A job is idempotent per
 // (kind, ref).
 type JobKind string

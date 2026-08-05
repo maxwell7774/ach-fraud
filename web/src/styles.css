@@ -143,6 +143,64 @@ nav .nav-links { display: flex; align-items: center; gap: 28px; }
 .nav-burger svg { width: 18px; height: 18px; }
 .nav-menu { display: none; }
 
+/* Signed-in user chip */
+.nav-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: rgba(255,255,255,.7);
+  font-size: .775rem;
+}
+.nav-user-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-user-role { color: var(--gold); }
+.nav-user-logout {
+  background: none;
+  border: 1px solid rgba(255,255,255,.18);
+  color: rgba(255,255,255,.7);
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: .75rem;
+  font-family: inherit;
+}
+.nav-user-logout:hover { color: #fff; border-color: rgba(255,255,255,.35); }
+
+/* Login screen */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--gold);
+  box-shadow: 0 1px 2px var(--shadow);
+  padding: 40px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+.login-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold);
+  margin-bottom: 16px;
+}
+.login-brand svg { width: 40px; height: 40px; }
+.login-card h1 { font-size: 1.25rem; margin: 0 0 8px; color: var(--text); letter-spacing: -.2px; }
+.login-card p { margin: 0 0 24px; color: var(--text-muted); font-size: .85rem; }
+.login-btn { width: 100%; }
+.login-btn svg { width: 18px; height: 18px; }
+
 /* Dark mode toggle */
 .theme-toggle {
   background: none;
@@ -783,6 +841,7 @@ th.sort-asc .sort-icon, th.sort-desc .sort-icon { color: var(--gold); }
   }
   .nav-menu a:not(.brand):hover { background: rgba(255,255,255,.06); }
   .nav-menu a:not(.brand).active { color: #fff; border-left-color: var(--gold); background: rgba(203,181,132,.08); }
+  .nav-user-name { display: none; }
   .cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .card { padding: 16px; }
   .bulk-bar { flex-wrap: wrap; }

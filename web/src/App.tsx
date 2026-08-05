@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { Router, Route, A } from "@solidjs/router";
 import { FlashProvider } from "./flash";
 import { ConfirmProvider } from "./confirm";
@@ -11,7 +11,10 @@ import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
 import Headers from "./pages/Headers";
 import Events from "./pages/Events";
+import { api } from "./api";
+import { Loading } from "./components";
 import { MenuIcon, XIcon } from "./icons";
+import { setAuthDisabled, setCurrentUser, currentUser, isAdmin } from "./user";
 
 function Brand() {
   return (
@@ -27,15 +30,27 @@ function Brand() {
 const LINKS = [
   { href: "/", label: "Dashboard", end: true },
   { href: "/holds", label: "Holds" },
-  { href: "/submissions", label: "Files" },
-  { href: "/entries", label: "Entries" },
-  { href: "/headers", label: "Headers" },
-  { href: "/events", label: "Events" },
+  { href: "/submissions", label: "Files", admin: true },
+  { href: "/entries", label: "Entries", admin: true },
+  { href: "/headers", label: "Headers", admin: true },
+  { href: "/events", label: "Events", admin: true },
 ];
 
 function Layout(props: { children?: any }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const close = () => setMenuOpen(false);
+  const visibleLinks = () => LINKS.filter((l) => !l.admin || isAdmin());
+  const user = currentUser;
+  const roleLabel = (r?: string) =>
+    r === "admin" ? "Admin" : r === "processor" ? "Processor" : r === "watcher" ? "Watcher" : "";
+  async function signOut() {
+    try {
+      await api.logout();
+    } catch {
+      /* session already gone */
+    }
+    window.location.assign("/");
+  }
   return (
     <>
       <nav>
@@ -45,7 +60,7 @@ function Layout(props: { children?: any }) {
             ACH FRAUD
           </A>
           <div class="nav-links">
-            <For each={LINKS}>
+            <For each={visibleLinks()}>
               {(l) => (
                 <A href={l.href} end={l.end}>
                   {l.label}
@@ -54,6 +69,19 @@ function Layout(props: { children?: any }) {
             </For>
           </div>
           <div class="spacer" />
+          <Show when={user()}>
+            <div class="nav-user">
+              <span class="nav-user-name" title={user()!.upn}>
+                {user()!.name || user()!.upn}
+                <Show when={roleLabel(user()!.role)}>
+                  <span class="nav-user-role"> · {roleLabel(user()!.role)}</span>
+                </Show>
+              </span>
+              <button class="nav-user-logout" type="button" onClick={signOut}>
+                Sign out
+              </button>
+            </div>
+          </Show>
           <ThemeToggle />
           <button
             class="nav-burger"
@@ -67,7 +95,7 @@ function Layout(props: { children?: any }) {
         </div>
         <Show when={menuOpen()}>
           <div class="nav-menu">
-            <For each={LINKS}>
+            <For each={visibleLinks()}>
               {(l) => (
                 <A href={l.href} end={l.end} onClick={close}>
                   {l.label}
@@ -86,18 +114,80 @@ function Layout(props: { children?: any }) {
   );
 }
 
-export default function App() {
+function LoginScreen() {
   return (
-    <Router root={Layout}>
-      <Route path="/" component={Dashboard} />
-      <Route path="/holds" component={Holds} />
-      <Route path="/holds/:id" component={HoldDetail} />
-      <Route path="/submissions" component={Submissions} />
-      <Route path="/submissions/:id" component={SubmissionDetail} />
-      <Route path="/entries" component={Entries} />
-      <Route path="/headers" component={Headers} />
-      <Route path="/events" component={Events} />
-      <Route path="*404" component={() => <p>Not found</p>} />
-    </Router>
+    <div class="login-page">
+      <div class="login-card">
+        <span class="login-brand" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2 4 5.5v6c0 4.6 3.2 8.4 8 9.5 4.8-1.1 8-4.9 8-9.5v-6L12 2z" />
+            <polyline points="8.5 11.5 11 14 15.5 9" />
+          </svg>
+        </span>
+        <h1>ACH Fraud Review</h1>
+        <p>Sign in to review holds and manage releases.</p>
+        <a class="btn btn-approve login-btn" href="/api/auth/login">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />
+          </svg>
+          Sign in with Microsoft
+        </a>
+      </div>
+    </div>
+  );
+}
+
+type GateState = "loading" | "login" | "app";
+
+export default function App() {
+  const [state, setState] = createSignal<GateState>("loading");
+
+  createEffect(() => {
+    api
+      .me()
+      .then((u) => {
+        setCurrentUser(u);
+        setState("app");
+      })
+      .catch((e) => {
+        // 404 means auth isn't enabled (dev/e2e mode); anything else means we
+        // need to sign in.
+        if (e.status === 404) {
+          setAuthDisabled(true);
+          setState("app");
+        } else {
+          setState("login");
+        }
+      });
+  });
+
+  return (
+    <Show
+      when={state() !== "loading"}
+      fallback={
+        <div class="container">
+          <Loading label="Checking session…" />
+        </div>
+      }
+    >
+      <Show
+        when={state() === "login"}
+        fallback={
+          <Router root={Layout}>
+            <Route path="/" component={Dashboard} />
+            <Route path="/holds" component={Holds} />
+            <Route path="/holds/:id" component={HoldDetail} />
+            <Route path="/submissions" component={Submissions} />
+            <Route path="/submissions/:id" component={SubmissionDetail} />
+            <Route path="/entries" component={Entries} />
+            <Route path="/headers" component={Headers} />
+            <Route path="/events" component={Events} />
+            <Route path="*404" component={() => <p>Not found</p>} />
+          </Router>
+        }
+      >
+        <LoginScreen />
+      </Show>
+    </Show>
   );
 }

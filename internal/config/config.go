@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/27actions/ach/internal/domain"
 )
@@ -24,6 +26,54 @@ type Config struct {
 	HoldSingleAmount int64  `json:"hold_single_amount"`
 	HoldVelocityAmt  int64  `json:"hold_velocity_amount"`
 	DedupWindowDays  int    `json:"dedup_window_days"`
+
+	// Entra (OAuth2/OIDC) authentication. When AuthDisabled is true the web API
+	// accepts the X-Actor header instead of requiring a login (local dev/e2e).
+	EntraTenantID     string `json:"entra_tenant_id"`
+	EntraClientID     string `json:"entra_client_id"`
+	EntraClientSecret string `json:"entra_client_secret"`
+	EntraRedirectURL  string `json:"entra_redirect_url"`
+	SessionTTLHours   int    `json:"session_ttl_hours"`
+	CookieSecure      bool   `json:"cookie_secure"`
+	AuthDisabled      bool   `json:"auth_disabled"`
+
+	// Graph mail: app-only (client-credentials) emails from a shared mailbox.
+	MailEnabled       bool   `json:"mail_enabled"`
+	GraphTenantID     string `json:"graph_tenant_id"`
+	GraphClientID     string `json:"graph_client_id"`
+	GraphClientSecret string `json:"graph_client_secret"`
+	SharedMailbox     string `json:"shared_mailbox"`
+	AlertEmails       string `json:"alert_emails"`
+	AppBaseURL        string `json:"app_base_url"`
+}
+
+// EntraEnabled reports whether OIDC auth is configured and enabled.
+func (c *Config) EntraEnabled() bool {
+	return !c.AuthDisabled && c.EntraTenantID != "" && c.EntraClientID != ""
+}
+
+// SessionTTL returns the session lifetime, defaulting to 8 hours.
+func (c *Config) SessionTTL() time.Duration {
+	if c.SessionTTLHours <= 0 {
+		return 8 * time.Hour
+	}
+	return time.Duration(c.SessionTTLHours) * time.Hour
+}
+
+// MailConfigured reports whether Graph mail alerts are configured and enabled.
+func (c *Config) MailConfigured() bool {
+	return c.MailEnabled && c.GraphTenantID != "" && c.GraphClientID != "" && c.SharedMailbox != "" && c.AlertEmails != ""
+}
+
+// AlertEmailsList splits the comma-separated recipient list.
+func (c *Config) AlertEmailsList() []string {
+	var out []string
+	for _, e := range strings.Split(c.AlertEmails, ",") {
+		if e = strings.TrimSpace(e); e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Policy returns the hold rules as domain policy, applying the config
