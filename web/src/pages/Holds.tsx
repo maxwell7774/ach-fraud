@@ -1,0 +1,366 @@
+import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { useSearchParams, A } from "@solidjs/router";
+import { api, dollars, fmtDate, human } from "../api";
+import type { Hold } from "../api";
+import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading } from "../components";
+import { useFlash } from "../flash";
+import { useConfirm } from "../confirm";
+
+const STATUSES = ["", "pending", "approved", "declined", "auto_declined"];
+
+function groupKey(h: Hold): string {
+  return [h.entry_receiver_account, h.entry_rdfi, h.effective_date ?? "", h.customer_id].join("|");
+}
+
+export default function Holds() {
+  const [params, setParams] = useSearchParams();
+  // No status in the URL defaults to the pending view; the "All" tab is the
+  // explicit `status=all`.
+  const status = () => {
+    const s = params.status;
+    if (s === "" || s === "all") return "";
+    if (typeof s === "string") return s;
+    return "pending";
+  };
+  const { show: flash } = useFlash();
+  const { confirm } = useConfirm();
+
+  const [search, setSearch] = createSignal("");
+  const [q, setQ] = createSignal("");
+  const [startDate, setStartDate] = createSignal("");
+  const [endDate, setEndDate] = createSignal("");
+  const [page, setPage] = createSignal(1);
+  const [pageSize, setPageSize] = createSignal(25);
+  const [sort, setSort] = createSignal("");
+  const [dir, setDir] = createSignal("");
+  const [selected, setSelected] = createSignal<Set<string>>(new Set<string>());
+  const [reviewer, setReviewer] = createSignal(localStorage.getItem("ach.actor") ?? "");
+  const [dash, { refetch: refetchDash }] = createResource(api.dashboard);
+
+  const tabCount = (s: string) => {
+    const counts = dash()?.hold_counts ?? {};
+    if (s === "") return Object.values(counts).reduce((a, b) => a + b, 0);
+    return counts[s] ?? 0;
+  };
+
+  const key = createMemo(() => ({
+    status: status() || undefined,
+    q: q() || undefined,
+    start_date: startDate() || undefined,
+    end_date: endDate() || undefined,
+    page: page(),
+    pageSize: pageSize(),
+    sort: sort() || undefined,
+    dir: dir() || undefined,
+  }));
+  const [data, { refetch }] = createResource(key, api.holds);
+
+  const rows = () => data()?.holds ?? [];
+  const ids = () => rows().map((h) => h.id);
+
+  // Number of holds on the current page sharing the same velocity group.
+  const groupCounts = createMemo(() => {
+    const m = new Map<string, number>();
+    for (const h of rows()) {
+      const k = groupKey(h);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  });
+
+  function setStatus(s: string) {
+    setParams({ status: s === "" ? "all" : s });
+    setPage(1);
+    setSelected(new Set<string>());
+  }
+  function applyFilters() {
+    setQ(search());
+    setPage(1);
+  }
+  function clearFilters() {
+    setSearch("");
+    setQ("");
+    setStartDate("");
+    setEndDate("");
+    setParams({ status: "pending" });
+    setPage(1);
+  }
+  // The status tab is a view, not a filter — only search/dates count as active.
+  const filtersActive = () => !!(q() || startDate() || endDate());
+  function onSort(col: string, d: string) {
+    setSort(col);
+    setDir(d);
+    setPage(1);
+  }
+  function onPage(p: number, s: number) {
+    setPage(p);
+    setPageSize(s);
+  }
+  function toggle(id: string, checked: boolean) {
+    const s = new Set(selected());
+    if (checked) s.add(id);
+    else s.delete(id);
+    setSelected(s);
+  }
+  function toggleAll(checked: boolean) {
+    const s = new Set(selected());
+    if (checked) ids().forEach((id) => s.add(id));
+    else ids().forEach((id) => s.delete(id));
+    setSelected(s);
+  }
+  const allChecked = () => ids().length > 0 && ids().every((id) => selected().has(id));
+
+  // groupWarning builds the confirm-dialog warning for holds in a velocity
+  // group, listing every member that will be decided together.
+  function groupWarning(h: Hold, action: "approve" | "decline"): string {
+    const members = rows().filter((r) => groupKey(r) === groupKey(h));
+    if (members.length <= 1) return "";
+    const lines = members.map(
+      (m) => `• ${dollars(m.entry_amount)} to ${m.entry_receiver_account}${m.entry_receiver_name ? ` (${m.entry_receiver_name})` : ""}`
+    );
+    return (
+      `\n\nThis hold is part of a velocity group of ${members.length}. ` +
+      `The ${action === "approve" ? "approval" : "decline"} applies to every hold in the group:\n` +
+      lines.join("\n")
+    );
+  }
+
+  async function actOne(h: Hold, action: "approve" | "decline") {
+    const msg = `Confirm ${action} of hold ${h.id.slice(0, 8)}…?${groupWarning(h, action)}`;
+    if (
+      !(await confirm(msg, {
+        title: `${action === "approve" ? "Approve" : "Decline"} hold`,
+        tone: action,
+      }))
+    )
+      return;
+    localStorage.setItem("ach.actor", reviewer());
+    try {
+      await (action === "approve"
+        ? api.approve(h.id, { note: "", actor: reviewer() })
+        : api.decline(h.id, { note: "", actor: reviewer() }));
+      flash("success", `${action}d ${h.id.slice(0, 8)}…`);
+      setSelected(new Set<string>());
+      refetch();
+      refetchDash();
+    } catch (e) {
+      flash("error", String(e));
+    }
+  }
+
+  async function actBulk(action: "approve" | "decline") {
+    const ids = [...selected()];
+    if (ids.length === 0) return;
+    if (
+      !(await confirm(`Confirm ${action} of ${ids.length} selected holds?`, {
+        title: `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds`,
+        tone: action,
+      }))
+    )
+      return;
+    localStorage.setItem("ach.actor", reviewer());
+    try {
+      const res = await api.bulk(action, ids, { note: "", actor: reviewer() });
+      flash("success", `${res.count} ${action}d`);
+      setSelected(new Set<string>());
+      refetch();
+      refetchDash();
+    } catch (e) {
+      flash("error", String(e));
+    }
+  }
+
+  return (
+    <>
+      <h1>Holds</h1>
+
+      <div class="dir-tabs">
+        <For each={STATUSES}>
+          {(s) => (
+            <a
+              class={`dir-tab ${s === status() ? "active" : ""}`}
+              href={s === "" ? "/holds?status=all" : `/holds?status=${s}`}
+              onClick={(e) => {
+                e.preventDefault();
+                setStatus(s);
+              }}
+            >
+              {s === "" ? "All" : human(s)}
+              <Show when={tabCount(s) > 0}>
+                <span class="tab-count">{tabCount(s)}</span>
+              </Show>
+            </a>
+          )}
+        </For>
+      </div>
+
+      <div class="search-bar">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            applyFilters();
+          }}
+        >
+          <input
+            type="search"
+            placeholder="Search account, name, trace, file…"
+            value={search()}
+            onInput={(e) => setSearch(e.currentTarget.value)}
+          />
+          <label>
+            From <DatePicker value={startDate()} onChange={setStartDate} />
+          </label>
+          <label>
+            To <DatePicker value={endDate()} onChange={setEndDate} />
+          </label>
+          <label>
+            Reviewer{" "}
+            <input
+              type="text"
+              class="reviewer-input"
+              value={reviewer()}
+              onInput={(e) => setReviewer(e.currentTarget.value)}
+            />
+          </label>
+          <button class="btn btn-outline" type="submit">
+            Filter
+          </button>
+        </form>
+      </div>
+
+      <Show when={data()} fallback={<Loading label="Loading holds…" />}>
+        <div class="table-wrap">
+          <Show when={rows().length === 0}>
+            <EmptyState
+              message={filtersActive() ? "No holds match your filters." : "No holds yet."}
+              hint={
+                filtersActive()
+                  ? "Try a different search or clear the filters below."
+                  : "Holds appear here when a file is screened."
+              }
+            />
+            <Show when={filtersActive()}>
+              <div class="empty-actions">
+                <button class="btn btn-outline btn-sm" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </div>
+            </Show>
+          </Show>
+          <Show when={rows().length > 0}>
+          <Show when={selected().size > 0}>
+            <div class="bulk-bar">
+              <span class="selected-count">{selected().size} selected</span>
+              <button class="btn btn-approve btn-sm" onClick={() => actBulk("approve")}>
+                Approve
+              </button>
+              <button class="btn btn-decline btn-sm" onClick={() => actBulk("decline")}>
+                Decline
+              </button>
+            </div>
+          </Show>
+          <table class="responsive">
+            <thead>
+              <tr>
+                <th class="select-col">
+                  <input
+                    type="checkbox"
+                    id="selAll"
+                    checked={allChecked()}
+                    onChange={(e) => toggleAll(e.currentTarget.checked)}
+                  />
+                </th>
+                <SortableTh col="filename" sort={sort()} dir={dir()} onSort={onSort}>
+                  File
+                </SortableTh>
+                <SortableTh col="effective" sort={sort()} dir={dir()} onSort={onSort}>
+                  Effective
+                </SortableTh>
+                <SortableTh col="receiver" sort={sort()} dir={dir()} onSort={onSort}>
+                  Receiver
+                </SortableTh>
+                <SortableTh col="account" sort={sort()} dir={dir()} onSort={onSort}>
+                  Account
+                </SortableTh>
+                <SortableTh col="amount" sort={sort()} dir={dir()} onSort={onSort}>
+                  Amount
+                </SortableTh>
+                <SortableTh col="rdfi" sort={sort()} dir={dir()} onSort={onSort}>
+                  RDFI
+                </SortableTh>
+                <SortableTh col="status" sort={sort()} dir={dir()} onSort={onSort}>
+                  Status
+                </SortableTh>
+                <th>Why held</th>
+                <th>Group</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={rows()}>
+                {(h) => (
+                  <tr class="selectable-row">
+                    <td data-label="">
+                      <input
+                        type="checkbox"
+                        name="id"
+                        checked={selected().has(h.id)}
+                        onChange={(e) => toggle(h.id, e.currentTarget.checked)}
+                      />
+                    </td>
+                    <td data-label="File" class="muted">
+                      {h.filename}
+                    </td>
+                    <td data-label="Effective">{fmtDate(h.effective_date)}</td>
+                    <td data-label="Receiver">{h.entry_receiver_name}</td>
+                    <td data-label="Account">
+                      <A href={`/holds/${h.id}`} class="file-link">
+                        {h.entry_receiver_account}
+                      </A>
+                    </td>
+                    <td data-label="Amount" class="amount">
+                      {dollars(h.entry_amount)}
+                    </td>
+                    <td data-label="RDFI">{h.entry_rdfi}</td>
+                    <td data-label="Status">
+                      <Badge status={h.status} />
+                    </td>
+                    <td data-label="Why held" class="muted">
+                      {h.reason || "—"}
+                    </td>
+                    <td data-label="Group">
+                      <Show when={groupCounts().get(groupKey(h))! > 1}>
+                        <span
+                          class="badge group-badge"
+                          title="Same-day velocity group: these hold together, and are released together once approved"
+                        >
+                          {groupCounts().get(groupKey(h))} in group
+                        </span>
+                      </Show>
+                    </td>
+                    <td data-label="Actions">
+                      <Show when={h.status === "pending" || h.status === "auto_declined"}>
+                        <RowActions
+                          holdId={h.id}
+                          onApprove={() => actOne(h, "approve")}
+                          onDecline={() => actOne(h, "decline")}
+                        />
+                      </Show>
+                    </td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+          <Pagination
+            page={page()}
+            pageSize={pageSize()}
+            total={data()?.total ?? 0}
+            onChange={onPage}
+          />
+          </Show>
+        </div>
+      </Show>
+    </>
+  );
+}
