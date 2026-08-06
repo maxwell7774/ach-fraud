@@ -234,8 +234,11 @@ func TestScreenHoldingRDFI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("screen: %v", err)
 	}
-	if res.Pending != 0 {
-		t.Fatalf("expected holding-rdfi entry skipped, got %d", res.Pending)
+	if res.Pending != 0 || res.AutoDeclined != 0 {
+		t.Fatalf("expected holding-rdfi entry skipped, got %+v", res)
+	}
+	if got := len(st.HoldsFor(sub)); got != 0 {
+		t.Fatalf("expected no holds, got %d", got)
 	}
 }
 

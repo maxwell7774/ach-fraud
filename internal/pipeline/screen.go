@@ -97,6 +97,8 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 			if !creditEligible(e, cutoff) {
 				continue
 			}
+			// Entries destined for our own routing number are inbound and
+			// trusted; skip them entirely.
 			if d.Policy.HoldingRDFI != "" && e.Rdfi == d.Policy.HoldingRDFI {
 				continue
 			}

@@ -50,7 +50,7 @@ Job chain per submission: `fix_submission → import → screen → process → 
 
 ## Hold criteria (pipeline/screen.go, Go — not SQL)
 
-- Credit entries (tran 22/32), `effective_date` within `hold_days`, RDFI != `holding_rdfi`. The trigger is the **same-day group sum** (per sender customer_id/receiver account/RDFI/effective date, summed across ALL ready submissions via `SumVelocity`) ≥ `hold_velocity_amount` (default 100000 cents = $1,000) — a single $1,000 entry is caught because it is its own group sum; so is a multi-entry structuring attack.
+- Credit entries (tran 22/32 only), `effective_date` within `hold_days`. Entries destined for the holding RDFI (our own routing number) are **skipped** — inbound and trusted. The trigger is the **same-day group sum** (per sender customer_id/receiver account/RDFI/effective date, summed across ALL ready submissions via `SumVelocity`) ≥ `hold_velocity_amount` (default 100000 cents = $1,000) — a single $1,000 entry is caught because it is its own group sum; so is a multi-entry structuring attack.
 - Outcome is decided by the (receiver account/RDFI) combo's whitelist/blacklist status (from full hold history, no expiry, via `ListCombosBySubmission`):
   - **blacklisted** (prior `declined` hold) → auto-declined hold, any sum.
   - **whitelisted** (prior `approved` hold) → trusted; no hold, the money sends.
