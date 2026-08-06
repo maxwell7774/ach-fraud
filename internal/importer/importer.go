@@ -104,7 +104,7 @@ func ParseCSV(path string) ([]Row, error) {
 // per (customer, effective date) group, an entry per unique (rdfi, account),
 // and an approved hold with an audit review for each entry. Rows whose
 // (rdfi, account) already exists in the store are skipped, so a re-run is safe.
-func Import(ctx context.Context, st ports.Store, path string, amount int64, actor string) (Result, error) {
+func Import(ctx context.Context, st ports.Store, path string, amount int64, actor string, progress ...Progress) (Result, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Result{}, fmt.Errorf("read file: %w", err)
@@ -215,6 +215,10 @@ func Import(ctx context.Context, st ports.Store, path string, amount int64, acto
 				}
 
 				seen[key] = true
+
+				if len(progress) > 0 && progress[0] != nil {
+					progress[0](res.Entries)
+				}
 			}
 		}
 		return nil
@@ -224,6 +228,10 @@ func Import(ctx context.Context, st ports.Store, path string, amount int64, acto
 
 	return res, nil
 }
+
+// Progress receives a running count of imported entries; commands use it to
+// show progress during long imports.
+type Progress func(entries int)
 
 // cleanUTF8 returns s unchanged if it is valid UTF-8, otherwise it re-decodes
 // the bytes as latin-1 (ISO-8859-1) into UTF-8. This handles CSV files that

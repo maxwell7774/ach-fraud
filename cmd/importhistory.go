@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/27actions/ach/internal/config"
 	"github.com/27actions/ach/internal/importer"
@@ -51,11 +53,26 @@ For example:
 		}
 		defer st.Close()
 
-		res, err := importer.Import(ctx, st, filePath, amount, actor)
+		// Spin a CLI loader only when stdout is a terminal; piped/redirected
+		// output (cron, logs) prints nothing during the import so it doesn't
+		// spew one line per entry.
+		var progress importer.Progress
+		if isTerminal(os.Stdout) {
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			frame := 0
+			progress = func(entries int) {
+				fmt.Printf("\r%s importing... %s", frames[frame%len(frames)], commas(entries))
+				frame++
+			}
+		}
+		res, err := importer.Import(ctx, st, filePath, amount, actor, progress)
 		if err != nil {
 			return err
 		}
 
+		if isTerminal(os.Stdout) {
+			fmt.Printf("\r✓ importing... %s\n", commas(res.Entries))
+		}
 		fmt.Printf("imported %s\n", res.Filename)
 		fmt.Printf("  batch headers: %d\n", res.Headers)
 		fmt.Printf("  entries: %d\n", res.Entries)
@@ -64,6 +81,33 @@ For example:
 		fmt.Printf("  skipped (duplicate in file): %d\n", res.SkippedDuplicate)
 		return nil
 	},
+}
+
+// isTerminal reports whether w is attached to a character device (a terminal),
+// so progress output can be skipped when the CLI is piped or logged.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// commas formats n with thousands separators for the progress line.
+func commas(n int) string {
+	s := fmt.Sprintf("%d", n)
+	out := ""
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out += ","
+		}
+		out += string(c)
+	}
+	return out
 }
 
 func init() {
