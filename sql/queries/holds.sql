@@ -114,9 +114,11 @@ JOIN submissions s ON s.id = bh.submission_id
 WHERE h.id = $1;
 
 -- name: ListCombosBySubmission :many
--- Hold-combo status for the receiver account/RDFI pairs present in the
+-- Whitelist/blacklist status for the receiver account/RDFI pairs present in the
 -- submission being screened. Full hold history (no expiry) is consulted via the
--- EXISTS subqueries, but only for the pairs that matter to this file.
+-- EXISTS subqueries, but only for the pairs that matter to this file. A combo
+-- is whitelisted by a prior APPROVED hold and blacklisted by a prior DECLINED
+-- hold; pending/auto_declined holds count for neither (undecided, re-screened).
 WITH my_combos AS (
     SELECT DISTINCT be.rdfi, be.receiver_account
     FROM batch_entries be
@@ -130,7 +132,8 @@ SELECT mc.rdfi, mc.receiver_account,
            SELECT 1 FROM holds h
            JOIN batch_entries be2 ON be2.id = h.entry_id
            WHERE be2.rdfi = mc.rdfi AND be2.receiver_account = mc.receiver_account
-       ) AS has_hold,
+             AND h.status = 'approved'
+       ) AS has_approved,
        EXISTS (
            SELECT 1 FROM holds h
            JOIN batch_entries be2 ON be2.id = h.entry_id

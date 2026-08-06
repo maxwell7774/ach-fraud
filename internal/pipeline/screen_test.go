@@ -239,27 +239,49 @@ func TestScreenHoldingRDFI(t *testing.T) {
 	}
 }
 
-// TestScreenComboSkip: an account already under review is not held again when
-// its same-day velocity does not cross the threshold.
-func TestScreenComboSkip(t *testing.T) {
+// TestScreenWhitelistedComboPasses: a combo with a prior APPROVED hold is
+// whitelisted — a new high-value entry to it sends without a hold.
+func TestScreenWhitelistedComboPasses(t *testing.T) {
 	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	d, st := screenDeps(t, now)
 	sub := seedSubmission(t, st, "a.ach", now)
-	// Existing pending hold on the combo in another submission (yesterday).
+	// Prior approved hold on the combo (yesterday).
 	other := seedSubmission(t, st, "b.ach", now)
 	entry := seedEntry(t, st, other, account1, 200000, now.AddDate(0, 0, -1))
-	if _, err := st.CreateHold(context.Background(), entry, domain.HoldPending, ""); err != nil {
+	if _, err := st.CreateHold(context.Background(), entry, domain.HoldApproved, ""); err != nil {
 		t.Fatalf("seed hold: %v", err)
 	}
-	// A small entry today: its group does not cross the velocity threshold.
-	seedEntry(t, st, sub, account1, 2500, now.AddDate(0, 0, -2))
+	// A $2,000 entry today to the same combo.
+	seedEntry(t, st, sub, account1, 200000, now.AddDate(0, 0, -2))
 
 	res, err := ScreenSubmission(context.Background(), d, sub)
 	if err != nil {
 		t.Fatalf("screen: %v", err)
 	}
-	if res.Pending != 0 {
-		t.Fatalf("expected combo skipped, got %d", res.Pending)
+	if res.Pending != 0 || res.AutoDeclined != 0 {
+		t.Fatalf("expected whitelisted combo to pass, got %+v", res)
+	}
+}
+
+// TestScreenPendingComboRescreened: a pending hold is not history — the combo
+// is undecided, so a new high-value entry is held for review again.
+func TestScreenPendingComboRescreened(t *testing.T) {
+	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	d, st := screenDeps(t, now)
+	sub := seedSubmission(t, st, "a.ach", now)
+	other := seedSubmission(t, st, "b.ach", now)
+	entry := seedEntry(t, st, other, account1, 200000, now.AddDate(0, 0, -1))
+	if _, err := st.CreateHold(context.Background(), entry, domain.HoldPending, ""); err != nil {
+		t.Fatalf("seed hold: %v", err)
+	}
+	seedEntry(t, st, sub, account1, 200000, now.AddDate(0, 0, -2))
+
+	res, err := ScreenSubmission(context.Background(), d, sub)
+	if err != nil {
+		t.Fatalf("screen: %v", err)
+	}
+	if res.Pending != 1 {
+		t.Fatalf("expected pending hold on rescreened combo, got %+v", res)
 	}
 }
 
@@ -391,5 +413,32 @@ func TestScreenIdempotent(t *testing.T) {
 	}
 	if got := len(st.HoldsFor(sub)); got != 1 {
 		t.Fatalf("expected 1 hold after re-screen, got %d", got)
+	}
+}
+
+// TestScreenVelocitySeesArchivedFiles: a fully processed (archived) file still
+// counts toward same-day velocity, so a later file on the same day cannot duck
+// the rule just because the earlier one was retired.
+func TestScreenVelocitySeesArchivedFiles(t *testing.T) {
+	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	eff := now.AddDate(0, 0, -1)
+	d, st := screenDeps(t, now)
+
+	// File A shipped $600 and was retired (archived).
+	subA := seedSubmission(t, st, "a.ach", now)
+	seedEntry(t, st, subA, account1, 60000, eff)
+	if err := st.SetSubmissionStatus(context.Background(), subA, domain.SubmissionArchived, ""); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// File B lands $600 to the same account/day later: A's exposure must still
+	// be counted, so $1,200 >= threshold and B is held.
+	subB := seedSubmission(t, st, "b.ach", now)
+	seedEntry(t, st, subB, account1, 60000, eff)
+	if _, err := ScreenSubmission(context.Background(), d, subB); err != nil {
+		t.Fatalf("screen b: %v", err)
+	}
+	if got := len(st.HoldsFor(subB)); got != 1 {
+		t.Fatalf("expected 1 velocity hold despite A being archived, got %d", got)
 	}
 }

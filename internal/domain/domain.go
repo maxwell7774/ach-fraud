@@ -34,6 +34,7 @@ const (
 	SubmissionReceived SubmissionStatus = "received"
 	SubmissionReady    SubmissionStatus = "ready"
 	SubmissionFailed   SubmissionStatus = "failed"
+	SubmissionArchived SubmissionStatus = "archived"
 )
 
 // Artifact is one content-addressed output of a submission. Each kind exists
@@ -237,12 +238,13 @@ type VelocitySum struct {
 }
 
 // HoldCombo is a receiver account/RDFI pair that appears in the submission
-// being screened, with whether the full hold history (no expiry) already flags
-// it (HasHold) and whether it carries a declined hold (HasDeclined).
+// being screened, with whether the full hold history (no expiry) already
+// whitelisted it (HasApproved) or blacklisted it (HasDeclined). Pending and
+// auto_declined holds count for neither.
 type HoldCombo struct {
 	Rdfi            string `json:"rdfi"`
 	ReceiverAccount string `json:"receiver_account"`
-	HasHold         bool   `json:"has_hold"`
+	HasApproved     bool   `json:"has_approved"`
 	HasDeclined     bool   `json:"has_declined"`
 }
 

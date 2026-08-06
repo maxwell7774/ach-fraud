@@ -534,7 +534,7 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 		out = append(out, domain.HoldCombo{
 			Rdfi:            r.Rdfi,
 			ReceiverAccount: r.ReceiverAccount,
-			HasHold:         r.HasHold,
+			HasApproved:     r.HasApproved,
 			HasDeclined:     r.HasDeclined,
 		})
 	}

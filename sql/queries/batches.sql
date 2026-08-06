@@ -96,7 +96,7 @@ JOIN target_groups tg
  AND tg.rdfi = be.rdfi
  AND tg.effective_date = bh.effective_date
  AND tg.customer_id = bh.customer_id
-WHERE s.status = 'ready'
+WHERE s.status IN ('ready', 'archived')
   AND be.tran_code IN (22, 32)
   AND bh.effective_date >= $1::date
   AND NOT EXISTS (

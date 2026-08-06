@@ -281,7 +281,8 @@ SELECT mc.rdfi, mc.receiver_account,
            SELECT 1 FROM holds h
            JOIN batch_entries be2 ON be2.id = h.entry_id
            WHERE be2.rdfi = mc.rdfi AND be2.receiver_account = mc.receiver_account
-       ) AS has_hold,
+             AND h.status = 'approved'
+       ) AS has_approved,
        EXISTS (
            SELECT 1 FROM holds h
            JOIN batch_entries be2 ON be2.id = h.entry_id
@@ -299,13 +300,15 @@ type ListCombosBySubmissionParams struct {
 type ListCombosBySubmissionRow struct {
 	Rdfi            string
 	ReceiverAccount string
-	HasHold         bool
+	HasApproved     bool
 	HasDeclined     bool
 }
 
-// Hold-combo status for the receiver account/RDFI pairs present in the
+// Whitelist/blacklist status for the receiver account/RDFI pairs present in the
 // submission being screened. Full hold history (no expiry) is consulted via the
-// EXISTS subqueries, but only for the pairs that matter to this file.
+// EXISTS subqueries, but only for the pairs that matter to this file. A combo
+// is whitelisted by a prior APPROVED hold and blacklisted by a prior DECLINED
+// hold; pending/auto_declined holds count for neither (undecided, re-screened).
 func (q *Queries) ListCombosBySubmission(ctx context.Context, arg ListCombosBySubmissionParams) ([]ListCombosBySubmissionRow, error) {
 	rows, err := q.db.Query(ctx, listCombosBySubmission, arg.SubmissionID, arg.Column2)
 	if err != nil {
@@ -318,7 +321,7 @@ func (q *Queries) ListCombosBySubmission(ctx context.Context, arg ListCombosBySu
 		if err := rows.Scan(
 			&i.Rdfi,
 			&i.ReceiverAccount,
-			&i.HasHold,
+			&i.HasApproved,
 			&i.HasDeclined,
 		); err != nil {
 			return nil, err

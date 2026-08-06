@@ -3,7 +3,7 @@ import { useSearchParams, A } from "@solidjs/router";
 import { api, fmtDateTime } from "../api";
 import { Badge, EmptyState, Loading } from "../components";
 
-const STATUSES = ["", "received", "ready", "failed"];
+const STATUSES = ["", "received", "ready", "archived", "failed"];
 
 export default function Submissions() {
   const [params, setParams] = useSearchParams();

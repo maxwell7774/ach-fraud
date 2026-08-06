@@ -122,6 +122,9 @@ func TestRunFullChainHeld(t *testing.T) {
 			t.Fatalf("%s state = %s, want archived", kind, got)
 		}
 	}
+	if got := submissionID(t, st, "held.ach").Status; got != domain.SubmissionArchived {
+		t.Fatalf("submission status = %s, want archived", got)
+	}
 
 	// A third run is a clean no-op.
 	rep, err = New(d).Run(context.Background(), in)

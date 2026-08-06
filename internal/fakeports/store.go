@@ -457,7 +457,8 @@ func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID 
 	for _, e := range s.entries {
 		hdr := s.headers[e.HeaderID]
 		sub := s.subs[hdr.SubmissionID]
-		if sub.Status != domain.SubmissionReady {
+		// Ready and archived submissions both carry real same-day exposure.
+		if sub.Status != domain.SubmissionReady && sub.Status != domain.SubmissionArchived {
 			continue
 		}
 		if j, ok := s.jobs[jobKey(domain.JobProcess, sub.ID)]; ok && j.State == domain.JobFailed {
@@ -834,14 +835,18 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 		}
 	}
 
-	// Full hold history (no expiry) consulted only for those pairs.
-	hasHold := map[string]bool{}
+	// Full hold history (no expiry) consulted only for those pairs. A combo is
+	// whitelisted by a prior approved hold, blacklisted by a prior declined
+	// hold; pending/auto_declined count for neither.
+	hasApproved := map[string]bool{}
 	hasDeclined := map[string]bool{}
 	for _, h := range s.holds {
 		en := s.entries[h.EntryID]
 		key := en.Rdfi + "|" + en.ReceiverAccount
-		hasHold[key] = true
-		if h.Status == domain.HoldDeclined {
+		switch h.Status {
+		case domain.HoldApproved:
+			hasApproved[key] = true
+		case domain.HoldDeclined:
 			hasDeclined[key] = true
 		}
 	}
@@ -849,7 +854,7 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 	out := make([]domain.HoldCombo, 0, len(order))
 	for _, k := range order {
 		c := combos[k]
-		c.HasHold = hasHold[k]
+		c.HasApproved = hasApproved[k]
 		c.HasDeclined = hasDeclined[k]
 		out = append(out, *c)
 	}

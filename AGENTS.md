@@ -39,7 +39,7 @@ Dependency direction is one-way: `cmd/httpapi/worker → pipeline → ports ← 
 
 ## Data model & flow
 
-- `submissions`: one per arriving file; `filename` is metadata, identity is id + `source_checksum`. Status: `received → ready → failed`.
+- `submissions`: one per arriving file; `filename` is metadata, identity is id + `source_checksum`. Status: `received → ready → archived` (or `failed`). `received` = ingested, awaiting fix; `ready` = imported, screening/processing in flight; `archived` = fully retired (original+fixed artifacts archived, release resolved); `failed` = unfixable, kept for inspection. `SumVelocity` counts `ready` + `archived` submissions (both carry real same-day exposure), so a retired file still contributes to cross-file velocity.
 - `artifacts`: one row per (submission_id, kind) — kind ∈ `original, fixed, cleaned, release`; state ∈ `staged, published, archived, pruned`. Checksum is content sha256; bytes shared across rows are stored once.
 - `holds`: pending/approved/declined/auto_declined, linked to a `release_artifact_id`, with a `reason` recorded at screening (velocity / single-amount / previously-declined). `reviews` record every decision (actor, action, note).
 - `jobs`: outbox, UNIQUE(kind, ref), state queued/in_progress/done/failed. `EnqueueJob` resets state to `queued` on conflict (re-enqueue re-runs). Claims run in `(run_at, created_at)` order so files in the same run are processed in arrival order deterministically. Stale `in_progress` jobs are requeued by `RequeueStaleJobs`.
@@ -50,10 +50,13 @@ Job chain per submission: `fix_submission → import → screen → process → 
 
 ## Hold criteria (pipeline/screen.go, Go — not SQL)
 
-- Credit entries (tran 22/32), `effective_date` within `hold_days`, RDFI != `holding_rdfi`.
-- Pending: no prior hold on the receiver account/RDFI combo, and amount ≥ `hold_single_amount` OR same-day velocity (per account/RDFI/date/customer) ≥ `hold_velocity_amount` (defaults 100000 cents = $1,000).
-- Velocity is computed across ALL ready submissions (`SumVelocity`), not per file, so funds split across multiple files on the same day cannot duck the rule. When a group crosses the threshold, EVERY entry in it is held for review — even accounts that were already flagged — and a `velocity_crossed` event is emitted with the group total, how much already shipped from earlier files (`prior`), and how much is being held now (`held`).
-- Auto-declined: combo with a prior *declined* hold, when its group does not cross the velocity threshold. Combos with any prior hold are otherwise skipped (no duplicate holds). Both `SumVelocity` and the combo lookups (`ListCombosBySubmission`) are **bounded to the groups present in the submission being screened**: the SQL still consults the full day's ready submissions and the full hold history (no expiry), but only for the receiver pairs this file touches, so screening cost is proportional to one file, not the whole database.
+- Credit entries (tran 22/32), `effective_date` within `hold_days`, RDFI != `holding_rdfi`. The trigger is the **same-day group sum** (per sender customer_id/receiver account/RDFI/effective date, summed across ALL ready submissions via `SumVelocity`) ≥ `hold_velocity_amount` (default 100000 cents = $1,000) — a single $1,000 entry is caught because it is its own group sum; so is a multi-entry structuring attack.
+- Outcome is decided by the (receiver account/RDFI) combo's whitelist/blacklist status (from full hold history, no expiry, via `ListCombosBySubmission`):
+  - **blacklisted** (prior `declined` hold) → auto-declined hold, any sum.
+  - **whitelisted** (prior `approved` hold) → trusted; no hold, the money sends.
+  - **undecided** (no approved/declined; pending/auto_declined counts for neither) + group sum ≥ threshold → pending hold for manual review; undecided + sum below → no hold.
+- A `velocity_crossed` event fires once per crossed group with the group total, how much already shipped from earlier files (`prior`), and how much is being held now (`held`) — so a file that shipped before a later file revealed the attack stays visible as a leak.
+- Both `SumVelocity` and the combo lookups are **bounded to the groups present in the submission being screened**: the SQL still consults the full day's ready submissions and the full hold history, but only for the receiver pairs this file touches, so screening cost is proportional to one file, not the whole database.
 - Caveat: files arriving in separate runs are screened in arrival order, so the first file of a day ships before a later split is detected (asymmetry); the first-leg leak is bounded below the velocity threshold.
 
 ## Config (`.achfraudconfig.json`, gitignored)

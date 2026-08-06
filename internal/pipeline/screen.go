@@ -39,17 +39,19 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 		heldIDs[h.EntryID] = true
 	}
 
-	// Hold-combo status for this submission's receiver pairs, consulted against
-	// the full hold history (no expiry) in SQL.
+	// Whitelist/blacklist status for this submission's receiver pairs,
+	// consulted against the full hold history (no expiry) in SQL. A combo is
+	// whitelisted by a prior approved hold, blacklisted by a prior declined
+	// hold; pending/auto_declined holds count for neither (undecided).
 	combos, err := d.Store.ListCombosBySubmission(ctx, submissionID, cutoff)
 	if err != nil {
 		return nil, err
 	}
-	combo := make(map[string]bool, len(combos))
+	approved := make(map[string]bool, len(combos))
 	declined := make(map[string]bool, len(combos))
 	for _, c := range combos {
 		key := c.Rdfi + "|" + c.ReceiverAccount
-		combo[key] = c.HasHold
+		approved[key] = c.HasApproved
 		declined[key] = c.HasDeclined
 	}
 
@@ -102,16 +104,30 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 			k := e.Rdfi + "|" + e.ReceiverAccount
 			gkey := velocityKey(e.ReceiverAccount, e.Rdfi, e.CustomerID, e.EffectiveDate)
 			groupVelocity := velocity[gkey]
+
+			// Decision order:
+			//   1. blacklisted combo (prior declined) -> auto-declined, any sum.
+			//   2. whitelisted combo (prior approved) -> trusted, money sends.
+			//   3. undecided combo whose same-day group sum crosses the
+			//      threshold -> held for manual review. This catches a single
+			//      $1,000+ entry (it is its own group sum) and a multi-entry
+			//      structuring attack; only undecided combos are held.
 			switch {
+			case declined[k]:
+				h, err := tx.CreateHold(ctx, e.ID, domain.HoldAutoDeclined, "account previously declined")
+				if err != nil {
+					return err
+				}
+				res.AutoDeclined++
+				created = append(created, createdHold{id: h.ID, status: domain.HoldAutoDeclined})
+			case approved[k]:
+				// Whitelisted: the account was vetted; let the funds through.
+				continue
 			case groupVelocity >= d.Policy.HoldVelocityAmount:
-				// Every entry in a same-day velocity-crossed group is held for
-				// review — even when the account was flagged before. Splitting
-				// funds across files must not duck the rule.
-				//
 				// The reason reflects what actually held THIS entry: an amount
-				// that alone crosses the single-entry threshold is labeled as
-				// such, even though it also trips the velocity rule. Only
-				// entries below the single threshold get the velocity label.
+				// that alone crosses the threshold is labeled as such, even
+				// though it also trips the same-day sum. Only entries below
+				// the single threshold get the velocity label.
 				reason := fmt.Sprintf("velocity: same-day total %s crossed the threshold", cents(groupVelocity))
 				if e.Amount >= d.Policy.HoldSingleAmount {
 					reason = fmt.Sprintf("amount: %s exceeds the single-entry threshold", cents(e.Amount))
@@ -126,24 +142,6 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 					alerted[gkey] = true
 					created = append(created, createdHold{alert: velocityAlertFor(e, groupVelocity, own[gkey])})
 				}
-			case declined[k]:
-				h, err := tx.CreateHold(ctx, e.ID, domain.HoldAutoDeclined, "account previously declined")
-				if err != nil {
-					return err
-				}
-				res.AutoDeclined++
-				created = append(created, createdHold{id: h.ID, status: domain.HoldAutoDeclined})
-			case combo[k]:
-				// Account already under review; do not pile on another hold.
-				continue
-			case e.Amount >= d.Policy.HoldSingleAmount:
-				h, err := tx.CreateHold(ctx, e.ID, domain.HoldPending,
-					fmt.Sprintf("amount: %s exceeds the single-entry threshold", cents(e.Amount)))
-				if err != nil {
-					return err
-				}
-				res.Pending++
-				created = append(created, createdHold{id: h.ID, status: domain.HoldPending})
 			}
 		}
 		return nil

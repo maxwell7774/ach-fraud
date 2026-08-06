@@ -65,7 +65,7 @@ func TestListCombosBySubmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("entry: %v", err)
 	}
-	if _, err := st.CreateHold(ctx, en1.ID, domain.HoldPending, ""); err != nil {
+	if _, err := st.CreateHold(ctx, en1.ID, domain.HoldApproved, ""); err != nil {
 		t.Fatalf("hold: %v", err)
 	}
 	if _, err := st.CreateHold(ctx, en2.ID, domain.HoldDeclined, ""); err != nil {
@@ -83,11 +83,11 @@ func TestListCombosBySubmission(t *testing.T) {
 	for _, c := range combos {
 		byAcct[c.ReceiverAccount] = c
 	}
-	if !byAcct["acct1"].HasHold || byAcct["acct1"].HasDeclined {
-		t.Fatalf("acct1 should have a hold but no declined hold: %+v", byAcct["acct1"])
+	if !byAcct["acct1"].HasApproved || byAcct["acct1"].HasDeclined {
+		t.Fatalf("acct1 should be whitelisted (approved, not declined): %+v", byAcct["acct1"])
 	}
-	if !byAcct["acct2"].HasHold || !byAcct["acct2"].HasDeclined {
-		t.Fatalf("acct2 should be flagged declined: %+v", byAcct["acct2"])
+	if byAcct["acct2"].HasApproved || !byAcct["acct2"].HasDeclined {
+		t.Fatalf("acct2 should be blacklisted (declined): %+v", byAcct["acct2"])
 	}
 }
 

@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ArchiveSubmission retires the submission's original and fixed artifacts. It
-// only runs once both the cleaned and (if present) release artifacts are
-// published; the transmitted artifacts stay in the outgoing directory and are
-// cleaned up by a separate process. The retained bytes are untouched here —
-// prune handles the retention window.
+// ArchiveSubmission retires the submission's original and fixed artifacts and
+// marks the submission archived. It only runs once both the cleaned and (if
+// present) release artifacts are published or blocked; the transmitted
+// artifacts stay in the outgoing directory and are cleaned up separately. The
+// retained bytes are untouched here — prune handles the retention window.
 func ArchiveSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) error {
 	orig, err := d.Store.GetArtifactBySubmissionKind(ctx, submissionID, domain.ArtifactOriginal)
 	if err != nil {
@@ -52,7 +52,10 @@ func ArchiveSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) erro
 		if err := tx.SetArtifactState(ctx, orig.ID, domain.ArtifactArchived); err != nil {
 			return err
 		}
-		return tx.SetArtifactState(ctx, fixed.ID, domain.ArtifactArchived)
+		if err := tx.SetArtifactState(ctx, fixed.ID, domain.ArtifactArchived); err != nil {
+			return err
+		}
+		return tx.SetSubmissionStatus(ctx, submissionID, domain.SubmissionArchived, "")
 	}); err != nil {
 		return err
 	}
