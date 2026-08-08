@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/27actions/ach/internal/domain"
@@ -17,6 +19,9 @@ import (
 // Worker runs pipeline jobs.
 type Worker struct {
 	deps pipeline.Deps
+	// dispatchFn, when set, replaces the job dispatcher (tests use it to force
+	// a panicking stage).
+	dispatchFn func(ctx context.Context, job *domain.Job) error
 }
 
 func New(d pipeline.Deps) *Worker {
@@ -85,8 +90,20 @@ const (
 
 // runJob dispatches one claimed job and records the result. A job that cannot
 // complete yet (ErrNotReady) is re-queued to run again shortly; a real error
-// marks it failed; success completes it.
-func (w *Worker) runJob(ctx context.Context, job *domain.Job) outcome {
+// marks it failed; success completes it. A panic in a stage is recovered and
+// recorded as a failed job, so one buggy stage can never crash the worker or
+// block the rest of the queue.
+func (w *Worker) runJob(ctx context.Context, job *domain.Job) (out outcome) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("panic: %v\n%s", r, debug.Stack())
+			if ferr := w.deps.Store.FailJob(ctx, job.ID, msg); ferr != nil {
+				log.Printf("worker: recording panic for job %s: %v", job.ID, ferr)
+			}
+			out = outcomeFailed
+		}
+	}()
+
 	err := w.dispatch(ctx, job)
 	switch {
 	case errors.Is(err, pipeline.ErrNotReady):
@@ -108,6 +125,9 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) outcome {
 }
 
 func (w *Worker) dispatch(ctx context.Context, job *domain.Job) error {
+	if w.dispatchFn != nil {
+		return w.dispatchFn(ctx, job)
+	}
 	switch job.Kind {
 	case domain.JobFixSubmission:
 		return pipeline.FixSubmission(ctx, w.deps, job.Ref)

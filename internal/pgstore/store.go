@@ -351,11 +351,12 @@ func (s *Store) CountHoldsByStatus(ctx context.Context) (map[string]int64, error
 	return out, nil
 }
 
-func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, limit int) ([]domain.Hold, error) {
+func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Hold, error) {
 	rows, err := s.q.ListHoldsFiltered(ctx, ListHoldsFilteredParams{
 		Column1: status, Column2: search,
 		Column3: toPgDatePtr(start), Column4: toPgDatePtr(end),
-		Limit: int32(limit),
+		Column5: sort, Column6: dir,
+		Limit: int32(limit), Offset: int32(offset),
 	})
 	if err != nil {
 		return nil, err
@@ -379,11 +380,12 @@ func (s *Store) CountHoldsFiltered(ctx context.Context, status, search string, s
 	})
 }
 
-func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchEntry, error) {
+func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error) {
 	rows, err := s.q.ListEntriesFiltered(ctx, ListEntriesFilteredParams{
 		Column1: search,
 		Column2: toPgDatePtr(start), Column3: toPgDatePtr(end),
-		Limit: int32(limit),
+		Column4: sort, Column5: dir,
+		Limit: int32(limit), Offset: int32(offset),
 	})
 	if err != nil {
 		return nil, err
@@ -407,11 +409,12 @@ func (s *Store) CountEntriesFiltered(ctx context.Context, search string, start, 
 	})
 }
 
-func (s *Store) ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchHeader, error) {
+func (s *Store) ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchHeader, error) {
 	rows, err := s.q.ListHeadersFiltered(ctx, ListHeadersFilteredParams{
 		Column1: search,
 		Column2: toPgDatePtr(start), Column3: toPgDatePtr(end),
-		Limit: int32(limit),
+		Column4: sort, Column5: dir,
+		Limit: int32(limit), Offset: int32(offset),
 	})
 	if err != nil {
 		return nil, err
@@ -455,6 +458,30 @@ func (s *Store) ListSubmissions(ctx context.Context, status string, limit int) (
 	return out, nil
 }
 
+func (s *Store) ListSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Submission, error) {
+	rows, err := s.q.ListSubmissionsFiltered(ctx, ListSubmissionsFilteredParams{
+		Column1: status, Column2: search,
+		Column3: toPgDatePtr(start), Column4: toPgDatePtr(end),
+		Column5: sort, Column6: dir,
+		Limit: int32(limit), Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Submission, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toDomainSubmission(r))
+	}
+	return out, nil
+}
+
+func (s *Store) CountSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error) {
+	return s.q.CountSubmissionsFiltered(ctx, CountSubmissionsFilteredParams{
+		Column1: status, Column2: search,
+		Column3: toPgDatePtr(start), Column4: toPgDatePtr(end),
+	})
+}
+
 func (s *Store) ListReviewsByHold(ctx context.Context, holdID uuid.UUID) ([]domain.Review, error) {
 	rows, err := s.q.ListReviewsByHold(ctx, toPgUUID(holdID))
 	if err != nil {
@@ -477,21 +504,35 @@ func (s *Store) ListEvents(ctx context.Context, limit, offset int) ([]domain.Eve
 	}
 	out := make([]domain.Event, 0, len(rows))
 	for _, r := range rows {
-		var ref *uuid.UUID
-		if r.Ref.Valid {
-			id := toUUID(r.Ref)
-			ref = &id
-		}
-		out = append(out, domain.Event{
-			ID: toUUID(r.ID), Type: r.Type, Ref: ref,
-			Payload: json.RawMessage(r.Payload), CreatedAt: r.CreatedAt.Time,
-		})
+		out = append(out, toDomainEvent(r))
 	}
 	return out, nil
 }
 
 func (s *Store) CountEvents(ctx context.Context) (int64, error) {
 	return s.q.CountEvents(ctx)
+}
+
+func (s *Store) ListEventsFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Event, error) {
+	rows, err := s.q.ListEventsFiltered(ctx, ListEventsFilteredParams{
+		Column1: search, Column2: toPgDatePtr(start), Column3: toPgDatePtr(end),
+		Column4: sort, Column5: dir,
+		Limit: int32(limit), Offset: int32(offset),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Event, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toDomainEvent(r))
+	}
+	return out, nil
+}
+
+func (s *Store) CountEventsFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error) {
+	return s.q.CountEventsFiltered(ctx, CountEventsFilteredParams{
+		Column1: search, Column2: toPgDatePtr(start), Column3: toPgDatePtr(end),
+	})
 }
 
 func (s *Store) ListArtifactsByStateOlderThan(ctx context.Context, state domain.ArtifactState, cutoff time.Time) ([]domain.Artifact, error) {
@@ -707,6 +748,18 @@ func toDomainSubmission(s Submission) domain.Submission {
 		Status:         domain.SubmissionStatus(s.Status),
 		FailedReason:   s.FailedReason,
 		ReceivedAt:     s.ReceivedAt.Time,
+	}
+}
+
+func toDomainEvent(e Event) domain.Event {
+	var ref *uuid.UUID
+	if e.Ref.Valid {
+		id := toUUID(e.Ref)
+		ref = &id
+	}
+	return domain.Event{
+		ID: toUUID(e.ID), Type: e.Type, Ref: ref,
+		Payload: json.RawMessage(e.Payload), CreatedAt: e.CreatedAt.Time,
 	}
 }
 

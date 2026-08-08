@@ -1,5 +1,5 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
-import { Router, Route, A } from "@solidjs/router";
+import { createEffect, createSignal, For, Show, ErrorBoundary } from "solid-js";
+import { Router, Route, A, useAction } from "@solidjs/router";
 import { FlashProvider } from "./flash";
 import { ConfirmProvider } from "./confirm";
 import ThemeToggle from "./ThemeToggle";
@@ -11,10 +11,11 @@ import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
 import Headers from "./pages/Headers";
 import Events from "./pages/Events";
-import { api } from "./api";
 import { Loading } from "./components";
 import { MenuIcon, XIcon } from "./icons";
 import { setAuthDisabled, setCurrentUser, currentUser, isAdmin } from "./user";
+import { api } from "./api";
+import { logoutAction } from "./queries";
 
 function Brand() {
   return (
@@ -43,9 +44,10 @@ function Layout(props: { children?: any }) {
   const user = currentUser;
   const roleLabel = (r?: string) =>
     r === "admin" ? "Admin" : r === "processor" ? "Processor" : r === "watcher" ? "Watcher" : "";
+  const logout = useAction(logoutAction);
   async function signOut() {
     try {
-      await api.logout();
+      await logout();
     } catch {
       /* session already gone */
     }
@@ -147,6 +149,7 @@ export default function App() {
       .me()
       .then((u) => {
         setCurrentUser(u);
+        setAuthDisabled(false);
         setState("app");
       })
       .catch((e) => {
@@ -173,6 +176,14 @@ export default function App() {
       <Show
         when={state() === "login"}
         fallback={
+          <ErrorBoundary fallback={(err, reset) => (
+            <div class="container">
+              <p class="empty">Something went wrong.</p>
+              <div class="empty-actions">
+                <button class="btn btn-outline btn-sm" onClick={reset}>Retry</button>
+              </div>
+            </div>
+          )}>
           <Router root={Layout}>
             <Route path="/" component={Dashboard} />
             <Route path="/holds" component={Holds} />
@@ -184,6 +195,7 @@ export default function App() {
             <Route path="/events" component={Events} />
             <Route path="*404" component={() => <p>Not found</p>} />
           </Router>
+          </ErrorBoundary>
         }
       >
         <LoginScreen />

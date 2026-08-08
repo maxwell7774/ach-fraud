@@ -1,4 +1,6 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { createAsync } from "@solidjs/router";
+import { headersQuery } from "../queries";
 import { api, fmtDate } from "../api";
 import { EmptyState, Loading, Pagination, SortableTh, DatePicker } from "../components";
 
@@ -21,7 +23,7 @@ export default function Headers() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const [data] = createResource(key, api.headers);
+  const data = createAsync(() => headersQuery(key()));
 
   function applyFilters() {
     setQ(search());

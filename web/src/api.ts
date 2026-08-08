@@ -134,6 +134,11 @@ export interface HoldsPage {
   total: number;
 }
 
+export interface SubmissionsPage {
+  submissions: Submission[];
+  total: number;
+}
+
 export interface EntriesPage {
   entries: BatchEntry[];
   total: number;
@@ -154,6 +159,7 @@ export interface ArtifactSum {
   entries: number;
   total: number;
   error?: string;
+  pruned?: boolean;
 }
 
 export interface EntryMatch {
@@ -167,6 +173,7 @@ export interface EntryMatch {
 
 export interface SubmissionVerify {
   verified: boolean;
+  pruned?: boolean;
   artifacts: Record<string, ArtifactSum>;
   issues: string[];
   entries: EntryMatch[];
@@ -243,8 +250,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ action, ids, note: body.note, actor: body.actor }),
     }),
-  submissions: (status?: string) =>
-    req<Submission[]>(`/api/submissions${status ? `?status=${status}` : ""}`),
+  submissions: (p: ListParams = {}) => req<SubmissionsPage>(`/api/submissions${qs(p)}`),
   submission: (id: string) => req<SubmissionDetail>(`/api/submissions/${id}`),
   verifySubmission: (id: string) => req<SubmissionVerify>(`/api/submissions/${id}/verify`),
   entries: (p: ListParams = {}) => req<EntriesPage>(`/api/entries${qs(p)}`),

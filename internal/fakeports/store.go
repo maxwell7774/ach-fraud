@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -598,8 +599,154 @@ func (s *Store) ListHoldsByStatus(ctx context.Context, status string, limit int)
 	return out, nil
 }
 
-func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, limit int) ([]domain.Hold, error) {
-	rows, err := s.ListHoldsByStatus(ctx, status, limit)
+func applyPage[T any](rows []T, offset, limit int) []T {
+	if offset >= len(rows) {
+		return nil
+	}
+	end := offset + limit
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return rows[offset:end]
+}
+
+func timeOrEmpty(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+func sortHoldsFor(rows []domain.Hold, col, dir string) {
+	asc := dir != "desc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		var less bool
+		switch col {
+		case "amount":
+			less = a.EntryAmount < b.EntryAmount
+		case "filename":
+			less = a.Filename < b.Filename
+		case "effective":
+			less = timeOrEmpty(a.EffectiveDate) < timeOrEmpty(b.EffectiveDate)
+		case "receiver":
+			less = a.EntryReceiverName < b.EntryReceiverName
+		case "account":
+			less = a.EntryReceiverAcct < b.EntryReceiverAcct
+		case "rdfi":
+			less = a.EntryRdfi < b.EntryRdfi
+		case "status":
+			less = a.Status < b.Status
+		default:
+			less = a.CreatedAt.After(b.CreatedAt)
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+func sortEntriesFor(rows []domain.BatchEntry, col, dir string) {
+	asc := dir != "desc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		var less bool
+		switch col {
+		case "amount":
+			less = a.Amount < b.Amount
+		case "tran_code":
+			less = a.TranCode < b.TranCode
+		case "trace":
+			less = a.Trace < b.Trace
+		case "rdfi":
+			less = a.Rdfi < b.Rdfi
+		case "receiver":
+			less = a.ReceiverName < b.ReceiverName
+		case "account":
+			less = a.ReceiverAccount < b.ReceiverAccount
+		case "effective":
+			less = timeOrEmpty(a.EffectiveDate) < timeOrEmpty(b.EffectiveDate)
+		case "filename":
+			less = a.Filename < b.Filename
+		default:
+			less = a.Trace < b.Trace
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+func sortHeadersFor(rows []domain.BatchHeader, col, dir string) {
+	asc := dir != "desc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		var less bool
+		switch col {
+		case "company_name":
+			less = a.CompanyName < b.CompanyName
+		case "customer_id":
+			less = a.CustomerID < b.CustomerID
+		case "effective":
+			less = timeOrEmpty(a.EffectiveDate) < timeOrEmpty(b.EffectiveDate)
+		case "filename":
+			less = a.Filename < b.Filename
+		default:
+			less = a.CustomerID < b.CustomerID
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+func sortSubmissionsFor(rows []domain.Submission, col, dir string) {
+	asc := dir != "desc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		var less bool
+		switch col {
+		case "filename":
+			less = a.Filename < b.Filename
+		case "received":
+			less = a.ReceivedAt.Before(b.ReceivedAt)
+		case "status":
+			less = a.Status < b.Status
+		default:
+			less = a.ReceivedAt.After(b.ReceivedAt)
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+func sortEventsFor(rows []domain.Event, col, dir string) {
+	asc := dir != "desc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		var less bool
+		switch col {
+		case "type":
+			less = a.Type < b.Type
+		case "when":
+			less = a.CreatedAt.Before(b.CreatedAt)
+		default:
+			less = a.CreatedAt.After(b.CreatedAt)
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Hold, error) {
+	rows, err := s.ListHoldsByStatus(ctx, status, 100000)
 	if err != nil {
 		return nil, err
 	}
@@ -617,9 +764,9 @@ func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, st
 		}
 		out = append(out, h)
 	}
-	return out, nil
+	sortHoldsFor(out, sort, dir)
+	return applyPage(out, offset, limit), nil
 }
-
 func matchesHold(h domain.Hold, search string) bool {
 	if search == "" {
 		return true
@@ -633,14 +780,14 @@ func matchesHold(h domain.Hold, search string) bool {
 }
 
 func (s *Store) CountHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error) {
-	rows, err := s.ListHoldsFiltered(ctx, status, search, start, end, 100000)
+	rows, err := s.ListHoldsFiltered(ctx, status, search, start, end, "", "", 100000, 0)
 	if err != nil {
 		return 0, err
 	}
 	return int64(len(rows)), nil
 }
 
-func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchEntry, error) {
+func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	search = strings.ToLower(search)
@@ -673,18 +820,18 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, e
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	sortEntriesFor(out, sort, dir)
+	return applyPage(out, offset, limit), nil
 }
-
 func (s *Store) CountEntriesFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error) {
-	rows, err := s.ListEntriesFiltered(ctx, search, start, end, 100000)
+	rows, err := s.ListEntriesFiltered(ctx, search, start, end, "", "", 100000, 0)
 	if err != nil {
 		return 0, err
 	}
 	return int64(len(rows)), nil
 }
 
-func (s *Store) ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchHeader, error) {
+func (s *Store) ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchHeader, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	search = strings.ToLower(search)
@@ -713,11 +860,11 @@ func (s *Store) ListHeadersFiltered(ctx context.Context, search string, start, e
 		}
 		out = append(out, h)
 	}
-	return out, nil
+	sortHeadersFor(out, sort, dir)
+	return applyPage(out, offset, limit), nil
 }
-
 func (s *Store) CountHeadersFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error) {
-	rows, err := s.ListHeadersFiltered(ctx, search, start, end, 100000)
+	rows, err := s.ListHeadersFiltered(ctx, search, start, end, "", "", 100000, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -747,6 +894,37 @@ func (s *Store) ListSubmissions(ctx context.Context, status string, limit int) (
 	return out, nil
 }
 
+func (s *Store) ListSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Submission, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.Submission
+	for _, sub := range s.subs {
+		if status != "" && string(sub.Status) != status {
+			continue
+		}
+		if search != "" && !strings.Contains(strings.ToLower(sub.Filename), strings.ToLower(search)) &&
+			!strings.Contains(strings.ToLower(sub.SourceChecksum), strings.ToLower(search)) {
+			continue
+		}
+		if start != nil && sub.ReceivedAt.Before(*start) {
+			continue
+		}
+		if end != nil && sub.ReceivedAt.After(*end) {
+			continue
+		}
+		out = append(out, sub)
+	}
+	sortSubmissionsFor(out, sort, dir)
+	return applyPage(out, offset, limit), nil
+}
+func (s *Store) CountSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error) {
+	rows, err := s.ListSubmissionsFiltered(ctx, status, search, start, end, "", "", 1<<30, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
+}
+
 func (s *Store) ListReviewsByHold(ctx context.Context, holdID uuid.UUID) ([]domain.Review, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -773,6 +951,33 @@ func (s *Store) CountEvents(ctx context.Context) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return int64(len(s.events)), nil
+}
+
+func (s *Store) ListEventsFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.Event
+	for _, e := range s.events {
+		if search != "" && !strings.Contains(strings.ToLower(e.Type), strings.ToLower(search)) {
+			continue
+		}
+		if start != nil && e.CreatedAt.Before(*start) {
+			continue
+		}
+		if end != nil && e.CreatedAt.After(*end) {
+			continue
+		}
+		out = append(out, e)
+	}
+	sortEventsFor(out, sort, dir)
+	return applyPage(out, offset, limit), nil
+}
+func (s *Store) CountEventsFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error) {
+	rows, err := s.ListEventsFiltered(ctx, search, start, end, "", "", 1<<30, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(rows)), nil
 }
 
 func (s *Store) ListCombosWithHolds(ctx context.Context) ([]domain.HoldCombo, error) {

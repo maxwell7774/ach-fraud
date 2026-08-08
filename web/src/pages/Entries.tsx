@@ -1,4 +1,6 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { createAsync } from "@solidjs/router";
+import { entriesQuery } from "../queries";
 import { api, dollars, fmtDate } from "../api";
 import { EmptyState, Loading, Pagination, SortableTh, DatePicker } from "../components";
 
@@ -21,7 +23,7 @@ export default function Entries() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const [data] = createResource(key, api.entries);
+  const data = createAsync(() => entriesQuery(key()));
 
   function applyFilters() {
     setQ(search());

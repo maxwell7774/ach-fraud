@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSubmissionsFiltered = `-- name: CountSubmissionsFiltered :one
+SELECT COUNT(*)::bigint FROM submissions
+WHERE ($1::text = '' OR status = $1)
+  AND ($2::text = '' OR filename ILIKE '%' || $2 || '%'
+       OR source_checksum ILIKE '%' || $2 || '%'
+       OR failed_reason ILIKE '%' || $2 || '%')
+  AND ($3::date IS NULL OR received_at >= $3::date)
+  AND ($4::date IS NULL OR received_at <= $4::date)
+`
+
+type CountSubmissionsFilteredParams struct {
+	Column1 string
+	Column2 string
+	Column3 pgtype.Date
+	Column4 pgtype.Date
+}
+
+func (q *Queries) CountSubmissionsFiltered(ctx context.Context, arg CountSubmissionsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSubmissionsFiltered,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createSubmission = `-- name: CreateSubmission :one
 INSERT INTO submissions(filename, source_checksum, status, received_at)
 VALUES ($1, $2, $3, $4)
@@ -149,6 +178,75 @@ type ListSubmissionsParams struct {
 
 func (q *Queries) ListSubmissions(ctx context.Context, arg ListSubmissionsParams) ([]Submission, error) {
 	rows, err := q.db.Query(ctx, listSubmissions, arg.Column1, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Submission
+	for rows.Next() {
+		var i Submission
+		if err := rows.Scan(
+			&i.ID,
+			&i.Filename,
+			&i.SourceChecksum,
+			&i.Status,
+			&i.FailedReason,
+			&i.ReceivedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSubmissionsFiltered = `-- name: ListSubmissionsFiltered :many
+SELECT id, filename, source_checksum, status, failed_reason, received_at, created_at, updated_at FROM submissions
+WHERE ($1::text = '' OR status = $1)
+  AND ($2::text = '' OR filename ILIKE '%' || $2 || '%'
+       OR source_checksum ILIKE '%' || $2 || '%'
+       OR failed_reason ILIKE '%' || $2 || '%')
+  AND ($3::date IS NULL OR received_at >= $3::date)
+  AND ($4::date IS NULL OR received_at <= $4::date)
+ORDER BY
+  CASE WHEN $5::text = 'filename' AND $6::text = 'desc' THEN filename END DESC,
+  CASE WHEN $5::text = 'filename' AND $6::text <> 'desc' THEN filename END ASC,
+  CASE WHEN $5::text = 'received' AND $6::text = 'desc' THEN received_at END DESC,
+  CASE WHEN $5::text = 'received' AND $6::text <> 'desc' THEN received_at END ASC,
+  CASE WHEN $5::text = 'status' AND $6::text = 'desc' THEN status END DESC,
+  CASE WHEN $5::text = 'status' AND $6::text <> 'desc' THEN status END ASC,
+  received_at DESC,
+  id DESC
+LIMIT $7 OFFSET $8
+`
+
+type ListSubmissionsFilteredParams struct {
+	Column1 string
+	Column2 string
+	Column3 pgtype.Date
+	Column4 pgtype.Date
+	Column5 string
+	Column6 string
+	Limit   int32
+	Offset  int32
+}
+
+func (q *Queries) ListSubmissionsFiltered(ctx context.Context, arg ListSubmissionsFilteredParams) ([]Submission, error) {
+	rows, err := q.db.Query(ctx, listSubmissionsFiltered,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Column6,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}

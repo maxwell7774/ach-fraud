@@ -1,13 +1,15 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { useParams, A } from "@solidjs/router";
+import { createAsync } from "@solidjs/router";
+import { submissionQuery, verifyQuery } from "../queries";
 import { api, dollars, fmtDateTime } from "../api";
 import { Badge, EmptyState, FileViewer, HoldTable, Loading } from "../components";
 import { ArrowLeftIcon } from "../icons";
 
 export default function SubmissionDetail() {
   const params = useParams<{ id: string }>();
-  const [sub] = createResource(() => params.id, (id) => api.submission(id));
-  const [verify] = createResource(() => params.id, (id) => api.verifySubmission(id));
+  const sub = createAsync(() => submissionQuery(params.id));
+  const verify = createAsync(() => verifyQuery(params.id));
   const [viewing, setViewing] = createSignal<string | null>(null);
   const [content, setContent] = createSignal("");
 
@@ -91,13 +93,20 @@ export default function SubmissionDetail() {
                         <>
                           <div class="key">{kind}</div>
                           <div class="val">
-                            {a.present ? (
-                              <>
-                                {a.entries} entries · {dollars(a.total)}
-                              </>
-                            ) : (
-                              <span class="muted">missing</span>
-                            )}
+                            <Show
+                              when={a.pruned}
+                              fallback={
+                                a.present ? (
+                                  <>
+                                    {a.entries} entries · {dollars(a.total)}
+                                  </>
+                                ) : (
+                                  <span class="muted">missing</span>
+                                )
+                              }
+                            >
+                              <span class="muted">pruned (retention)</span>
+                            </Show>
                             <Show when={a.error}>
                               <span class="muted"> ({a.error})</span>
                             </Show>
@@ -107,12 +116,21 @@ export default function SubmissionDetail() {
                     </For>
                     <div class="key">Chain</div>
                     <div class="val">
-                      <Badge status={v().verified ? "verified" : "fail"} />
+                      <Show when={v().pruned} fallback={<Badge status={v().verified ? "verified" : "fail"} />}>
+                        <span class="badge badge-pruned">Not verifiable</span>
+                      </Show>
                     </div>
                   </div>
                   <Show when={v().issues.length > 0}>
                     <For each={v().issues}>
-                      {(issue) => <p class="error issue">• {issue}</p>}
+                      {(issue) => (
+                        <Show
+                          when={issue.endsWith("pruned; verification unavailable")}
+                          fallback={<p class="error issue">• {issue}</p>}
+                        >
+                          <p class="muted issue">• {issue}</p>
+                        </Show>
+                      )}
                     </For>
                   </Show>
                 </div>

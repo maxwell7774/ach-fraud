@@ -343,9 +343,10 @@ func TestAuthActorFromSession(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	sess := cookieOf(t, rr, auth.SessionCookieName)
 
-	// Approve a hold; the review actor must be the signed-in user.
+	// Approve a hold; the review actor must be the signed-in user, even when
+	// the client tries to spoof a different one in the body.
 	holdID := seedHold(t, st)
-	body := strings.NewReader(`{}`)
+	body := strings.NewReader(`{"actor":"Imposter"}`)
 	req = httptest.NewRequest("POST", "/api/holds/"+holdID.String()+"/approve", body)
 	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: sess})
 	rr = httptest.NewRecorder()
@@ -451,5 +452,124 @@ func TestAuthMeReportsRole(t *testing.T) {
 	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/auth/me", nil), sess))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"role":"processor"`) {
 		t.Fatalf("me = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestVerifyReportsPruned(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "p.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	art, err := st.CreateArtifact(ctx, domain.Artifact{
+		SubmissionID: sub.ID, Kind: domain.ArtifactOriginal, Checksum: "abc123", State: domain.ArtifactPublished,
+	})
+	if err != nil {
+		t.Fatalf("artifact: %v", err)
+	}
+	if err := s.deps.Files.Put(ctx, "abc123", []byte("ach bytes")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	// Retire the artifact and remove its bytes, as prune does.
+	if err := st.SetArtifactState(ctx, art.ID, domain.ArtifactPruned); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if err := s.deps.Files.Delete(ctx, "abc123"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/submissions/"+sub.ID.String()+"/verify", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("verify = %d %s", rr.Code, rr.Body.String())
+	}
+	var v submissionVerify
+	if err := json.Unmarshal(rr.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !v.Pruned {
+		t.Fatalf("verify.pruned = false, want true: %s", rr.Body.String())
+	}
+	sum := v.Artifacts["original"]
+	if !sum.Pruned || sum.Present || sum.Error != "" {
+		t.Fatalf("original sum = %+v, want pruned (present=false, no error)", sum)
+	}
+	if len(v.Issues) != 1 || !strings.Contains(v.Issues[0], "pruned; verification unavailable") {
+		t.Fatalf("issues = %v, want a pruned note", v.Issues)
+	}
+}
+
+func TestSubmissionsFilteredPaged(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	for i, f := range []string{"alpha.ach", "bravo.ach", "charlie.ach"} {
+		status := domain.SubmissionReady
+		if i == 2 {
+			status = domain.SubmissionArchived
+		}
+		if _, err := st.CreateSubmission(ctx, domain.Submission{
+			Filename: f, Status: status, ReceivedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// Search narrows to a single file.
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/submissions?q=bravo", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("search = %d", rr.Code)
+	}
+	var page submissionsPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if page.Total != 1 || len(page.Submissions) != 1 || page.Submissions[0].Filename != "bravo.ach" {
+		t.Fatalf("search page = %+v", page)
+	}
+
+	// Status filter.
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/submissions?status=archived", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	json.Unmarshal(rr.Body.Bytes(), &page)
+	if page.Total != 1 || page.Submissions[0].Filename != "charlie.ach" {
+		t.Fatalf("status page = %+v", page)
+	}
+
+	// Pagination: page size 1 returns one row but total 3.
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/submissions?pageSize=1", nil))
+	json.Unmarshal(rr.Body.Bytes(), &page)
+	if page.Total != 3 || len(page.Submissions) != 1 {
+		t.Fatalf("paged = %+v", page)
+	}
+}
+
+func TestEventsFiltered(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	evTypes := []string{"hold_created", "velocity_crossed", "hold_created"}
+	for i, typ := range evTypes {
+		if err := st.AppendEvent(ctx, typ, nil, nil); err != nil {
+			t.Fatalf("event: %v", err)
+		}
+		_ = i
+	}
+
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/events?q=velocity", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("events = %d", rr.Code)
+	}
+	var page eventsPage
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if page.Total != 1 || len(page.Events) != 1 || page.Events[0].Type != "velocity_crossed" {
+		t.Fatalf("events page = %+v", page)
 	}
 }

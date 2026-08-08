@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -400,5 +401,35 @@ func TestRunDedupSkipsIdenticalResubmission(t *testing.T) {
 	}
 	if rep.Ingested != 0 || rep.Skipped != 1 {
 		t.Fatalf("expected duplicate skipped, got %+v", rep)
+	}
+}
+
+// TestRunPanicRecovers: a panicking stage is recovered into a failed job so the
+// worker survives and the queue keeps draining.
+func TestRunPanicRecovers(t *testing.T) {
+	d, st, _, _ := testDeps(t)
+	w := New(d)
+	w.dispatchFn = func(context.Context, *domain.Job) error {
+		panic("boom")
+	}
+	ctx := context.Background()
+	ref := uuid.New()
+	if err := st.EnqueueJob(ctx, domain.JobFixSubmission, ref, time.Now()); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	rep, err := w.Run(ctx, fakeports.NewInput())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if rep.Failed != 1 || rep.Completed != 0 {
+		t.Fatalf("expected exactly 1 failed job, got %+v", rep)
+	}
+	job := st.Job(domain.JobFixSubmission, ref)
+	if job == nil || job.State != domain.JobFailed {
+		t.Fatalf("job = %+v, want failed", job)
+	}
+	if !strings.Contains(job.LastError, "panic: boom") {
+		t.Fatalf("last_error = %q, want panic message", job.LastError)
 	}
 }

@@ -47,6 +47,28 @@ func (q *Queries) CountEvents(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
+const countEventsFiltered = `-- name: CountEventsFiltered :one
+SELECT COUNT(*)::bigint FROM events
+WHERE ($1::text = '' OR type ILIKE '%' || $1 || '%'
+       OR ref::text ILIKE '%' || $1 || '%'
+       OR payload::text ILIKE '%' || $1 || '%')
+  AND ($2::date IS NULL OR created_at >= $2::date)
+  AND ($3::date IS NULL OR created_at <= $3::date)
+`
+
+type CountEventsFilteredParams struct {
+	Column1 string
+	Column2 pgtype.Date
+	Column3 pgtype.Date
+}
+
+func (q *Queries) CountEventsFiltered(ctx context.Context, arg CountEventsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countEventsFiltered, arg.Column1, arg.Column2, arg.Column3)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listEvents = `-- name: ListEvents :many
 SELECT id, type, ref, payload, created_at FROM events ORDER BY created_at DESC LIMIT $1 OFFSET $2
 `
@@ -58,6 +80,67 @@ type ListEventsParams struct {
 
 func (q *Queries) ListEvents(ctx context.Context, arg ListEventsParams) ([]Event, error) {
 	rows, err := q.db.Query(ctx, listEvents, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Ref,
+			&i.Payload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventsFiltered = `-- name: ListEventsFiltered :many
+SELECT id, type, ref, payload, created_at FROM events
+WHERE ($1::text = '' OR type ILIKE '%' || $1 || '%'
+       OR ref::text ILIKE '%' || $1 || '%'
+       OR payload::text ILIKE '%' || $1 || '%')
+  AND ($2::date IS NULL OR created_at >= $2::date)
+  AND ($3::date IS NULL OR created_at <= $3::date)
+ORDER BY
+  CASE WHEN $4::text = 'type' AND $5::text = 'desc' THEN type END DESC,
+  CASE WHEN $4::text = 'type' AND $5::text <> 'desc' THEN type END ASC,
+  CASE WHEN $4::text = 'when' AND $5::text = 'desc' THEN created_at END DESC,
+  CASE WHEN $4::text = 'when' AND $5::text <> 'desc' THEN created_at END ASC,
+  created_at DESC,
+  id DESC
+LIMIT $6 OFFSET $7
+`
+
+type ListEventsFilteredParams struct {
+	Column1 string
+	Column2 pgtype.Date
+	Column3 pgtype.Date
+	Column4 string
+	Column5 string
+	Limit   int32
+	Offset  int32
+}
+
+func (q *Queries) ListEventsFiltered(ctx context.Context, arg ListEventsFilteredParams) ([]Event, error) {
+	rows, err := q.db.Query(ctx, listEventsFiltered,
+		arg.Column1,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+		arg.Column5,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}

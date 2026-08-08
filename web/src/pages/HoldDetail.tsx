@@ -1,33 +1,32 @@
-import { createResource, createSignal, For, Show } from "solid-js";
-import { useParams, A } from "@solidjs/router";
-import { api, dollars, fmtDateTime, fmtDate, releaseStateLabel } from "../api";
+import { createSignal, For, Show } from "solid-js";
+import { createAsync, useParams, useAction, useSubmission, A } from "@solidjs/router";
+import { dollars, fmtDateTime, fmtDate, releaseStateLabel } from "../api";
 import { Badge, Loading } from "../components";
 import { useFlash } from "../flash";
-import { useConfirm } from "../confirm";
 import { canReview } from "../user";
+import { approveHoldAction, declineHoldAction, holdQuery } from "../queries";
 import { ArrowLeftIcon, CheckIcon, XIcon } from "../icons";
 
 export default function HoldDetail() {
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
-  const { confirm } = useConfirm();
-  const [hold, { refetch }] = createResource(() => params.id, (id) => api.hold(id));
-  const [reviewer, setReviewer] = createSignal(localStorage.getItem("ach.actor") ?? "");
+  const hold = createAsync(() => holdQuery(params.id));
+  const approve = useAction(approveHoldAction);
+  const decline = useAction(declineHoldAction);
+  const approveSub = useSubmission(approveHoldAction);
+  const declineSub = useSubmission(declineHoldAction);
+  const busy = () => approveSub.pending || declineSub.pending;
   const [note, setNote] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
 
   async function act(action: "approve" | "decline") {
-    setBusy(true);
-    localStorage.setItem("ach.actor", reviewer());
-    try {
-      if (action === "approve") await api.approve(params.id, { note: note(), actor: reviewer() });
-      else await api.decline(params.id, { note: note(), actor: reviewer() });
-      flash("success", `${action === "approve" ? "Approved" : "Declined"}`);
-      refetch();
-    } catch (e) {
-      flash("error", String(e));
+    const submit = action === "approve" ? approve : decline;
+    const res = await submit({ id: params.id, note: note() });
+    if (!res.ok) {
+      flash("error", res.error ?? "failed");
+      return;
     }
-    setBusy(false);
+    flash("success", action === "approve" ? "Approved" : "Declined");
+    setNote("");
   }
 
   return (
@@ -115,15 +114,6 @@ export default function HoldDetail() {
                     act("approve");
                   }}
                 >
-                  <label>
-                    Reviewer{" "}
-                    <input
-                      type="text"
-                      value={reviewer()}
-                      placeholder="Your name"
-                      onInput={(e) => setReviewer(e.currentTarget.value)}
-                    />
-                  </label>
                   <label>
                     Note{" "}
                     <input

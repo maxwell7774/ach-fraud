@@ -1,11 +1,12 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
-import { useSearchParams, A } from "@solidjs/router";
-import { api, dollars, fmtDate, human } from "../api";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { createAsync, useSearchParams, useAction, useSubmission, A } from "@solidjs/router";
+import { dollars, fmtDate, human } from "../api";
 import type { Hold } from "../api";
 import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
+import { approveHoldAction, declineHoldAction, bulkHoldAction, dashboardQuery, holdsQuery } from "../queries";
 
 const STATUSES = ["", "pending", "approved", "declined", "auto_declined"];
 
@@ -35,8 +36,7 @@ export default function Holds() {
   const [sort, setSort] = createSignal("");
   const [dir, setDir] = createSignal("");
   const [selected, setSelected] = createSignal<Set<string>>(new Set<string>());
-  const [reviewer, setReviewer] = createSignal(localStorage.getItem("ach.actor") ?? "");
-  const [dash, { refetch: refetchDash }] = createResource(api.dashboard);
+  const dash = createAsync(() => dashboardQuery());
 
   const tabCount = (s: string) => {
     const counts = dash()?.hold_counts ?? {};
@@ -54,7 +54,7 @@ export default function Holds() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const [data, { refetch }] = createResource(key, api.holds);
+  const data = createAsync(() => holdsQuery(key()));
 
   const rows = () => data()?.holds ?? [];
   const ids = () => rows().map((h) => h.id);
@@ -68,6 +68,11 @@ export default function Holds() {
     }
     return m;
   });
+
+  const approve = useAction(approveHoldAction);
+  const decline = useAction(declineHoldAction);
+  const bulk = useAction(bulkHoldAction);
+  const bulkSub = useSubmission(bulkHoldAction);
 
   function setStatus(s: string) {
     setParams({ status: s === "" ? "all" : s });
@@ -135,18 +140,14 @@ export default function Holds() {
       }))
     )
       return;
-    localStorage.setItem("ach.actor", reviewer());
-    try {
-      await (action === "approve"
-        ? api.approve(h.id, { note: "", actor: reviewer() })
-        : api.decline(h.id, { note: "", actor: reviewer() }));
-      flash("success", `${action}d ${h.id.slice(0, 8)}…`);
-      setSelected(new Set<string>());
-      refetch();
-      refetchDash();
-    } catch (e) {
-      flash("error", String(e));
+    const submit = action === "approve" ? approve : decline;
+    const res = await submit({ id: h.id, note: "" });
+    if (!res.ok) {
+      flash("error", res.error ?? "failed");
+      return;
     }
+    flash("success", `${action}d ${h.id.slice(0, 8)}…`);
+    setSelected(new Set<string>());
   }
 
   async function actBulk(action: "approve" | "decline") {
@@ -159,16 +160,13 @@ export default function Holds() {
       }))
     )
       return;
-    localStorage.setItem("ach.actor", reviewer());
-    try {
-      const res = await api.bulk(action, ids, { note: "", actor: reviewer() });
-      flash("success", `${res.count} ${action}d`);
-      setSelected(new Set<string>());
-      refetch();
-      refetchDash();
-    } catch (e) {
-      flash("error", String(e));
+    const res = await bulk({ action, ids });
+    if (!res.ok) {
+      flash("error", res.error ?? "failed");
+      return;
     }
+    flash("success", `${res.count} ${action}d`);
+    setSelected(new Set<string>());
   }
 
   return (
@@ -214,15 +212,6 @@ export default function Holds() {
           <label>
             To <DatePicker value={endDate()} onChange={setEndDate} />
           </label>
-          <label>
-            Reviewer{" "}
-            <input
-              type="text"
-              class="reviewer-input"
-              value={reviewer()}
-              onInput={(e) => setReviewer(e.currentTarget.value)}
-            />
-          </label>
           <button class="btn btn-outline" type="submit">
             Filter
           </button>
@@ -252,10 +241,18 @@ export default function Holds() {
           <Show when={canReview() && selected().size > 0}>
             <div class="bulk-bar">
               <span class="selected-count">{selected().size} selected</span>
-              <button class="btn btn-approve btn-sm" onClick={() => actBulk("approve")}>
+              <button
+                class="btn btn-approve btn-sm"
+                disabled={bulkSub.pending}
+                onClick={() => actBulk("approve")}
+              >
                 Approve
               </button>
-              <button class="btn btn-decline btn-sm" onClick={() => actBulk("decline")}>
+              <button
+                class="btn btn-decline btn-sm"
+                disabled={bulkSub.pending}
+                onClick={() => actBulk("decline")}
+              >
                 Decline
               </button>
             </div>

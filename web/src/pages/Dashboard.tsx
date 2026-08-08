@@ -1,12 +1,14 @@
-import { createResource, For, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { A } from "@solidjs/router";
+import { createAsync } from "@solidjs/router";
+import { dashboardQuery } from "../queries";
 import { api, dollars, fmtDate } from "../api";
 import { Cards, HoldTable, Loading } from "../components";
 
 const firstLine = (s: string) => s.split("\n")[0];
 
 export default function Dashboard() {
-  const [data] = createResource(api.dashboard);
+  const data = createAsync(() => dashboardQuery());
   return (
     <Show when={data()} fallback={<Loading label="Loading dashboard…" />}>
       {(d) => (

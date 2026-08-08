@@ -19,10 +19,10 @@ web:
 	cd web && bun install && bun run build
 
 migrate-up:
-	. ./.env && goose -dir sql/schema up
+	. ./.env && goose -dir internal/migrate/schema up
 
 migrate-reset:
-	. ./.env && psql "$${GOOSE_DBSTRING}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" && goose -dir sql/schema up
+	. ./.env && psql "$${GOOSE_DBSTRING}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" && goose -dir internal/migrate/schema up
 
 e2e:
 	./hack/e2e.sh

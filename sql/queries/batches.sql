@@ -33,8 +33,26 @@ WHERE ($1::text = '' OR be.trace ILIKE '%' || $1 || '%'
        OR s.filename ILIKE '%' || $1 || '%')
   AND ($2::date IS NULL OR bh.effective_date >= $2::date)
   AND ($3::date IS NULL OR bh.effective_date <= $3::date)
-ORDER BY be.created_at DESC
-LIMIT $4;
+ORDER BY
+  CASE WHEN $4::text = 'amount' AND $5::text = 'desc' THEN be.amount END DESC,
+  CASE WHEN $4::text = 'amount' AND $5::text <> 'desc' THEN be.amount END ASC,
+  CASE WHEN $4::text = 'tran_code' AND $5::text = 'desc' THEN be.tran_code END DESC,
+  CASE WHEN $4::text = 'tran_code' AND $5::text <> 'desc' THEN be.tran_code END ASC,
+  CASE WHEN $4::text = 'trace' AND $5::text = 'desc' THEN be.trace END DESC,
+  CASE WHEN $4::text = 'trace' AND $5::text <> 'desc' THEN be.trace END ASC,
+  CASE WHEN $4::text = 'rdfi' AND $5::text = 'desc' THEN be.rdfi END DESC,
+  CASE WHEN $4::text = 'rdfi' AND $5::text <> 'desc' THEN be.rdfi END ASC,
+  CASE WHEN $4::text = 'receiver' AND $5::text = 'desc' THEN be.receiver_name END DESC,
+  CASE WHEN $4::text = 'receiver' AND $5::text <> 'desc' THEN be.receiver_name END ASC,
+  CASE WHEN $4::text = 'account' AND $5::text = 'desc' THEN be.receiver_account END DESC,
+  CASE WHEN $4::text = 'account' AND $5::text <> 'desc' THEN be.receiver_account END ASC,
+  CASE WHEN $4::text = 'effective' AND $5::text = 'desc' THEN bh.effective_date END DESC,
+  CASE WHEN $4::text = 'effective' AND $5::text <> 'desc' THEN bh.effective_date END ASC,
+  CASE WHEN $4::text = 'filename' AND $5::text = 'desc' THEN s.filename END DESC,
+  CASE WHEN $4::text = 'filename' AND $5::text <> 'desc' THEN s.filename END ASC,
+  be.created_at DESC,
+  be.id DESC
+LIMIT $6 OFFSET $7;
 
 -- name: CountEntriesFiltered :one
 SELECT COUNT(*)::bigint
@@ -59,8 +77,18 @@ WHERE ($1::text = '' OR bh.company_name ILIKE '%' || $1 || '%'
        OR s.filename ILIKE '%' || $1 || '%')
   AND ($2::date IS NULL OR bh.effective_date >= $2::date)
   AND ($3::date IS NULL OR bh.effective_date <= $3::date)
-ORDER BY bh.created_at DESC
-LIMIT $4;
+ORDER BY
+  CASE WHEN $4::text = 'company_name' AND $5::text = 'desc' THEN bh.company_name END DESC,
+  CASE WHEN $4::text = 'company_name' AND $5::text <> 'desc' THEN bh.company_name END ASC,
+  CASE WHEN $4::text = 'customer_id' AND $5::text = 'desc' THEN bh.customer_id END DESC,
+  CASE WHEN $4::text = 'customer_id' AND $5::text <> 'desc' THEN bh.customer_id END ASC,
+  CASE WHEN $4::text = 'effective' AND $5::text = 'desc' THEN bh.effective_date END DESC,
+  CASE WHEN $4::text = 'effective' AND $5::text <> 'desc' THEN bh.effective_date END ASC,
+  CASE WHEN $4::text = 'filename' AND $5::text = 'desc' THEN s.filename END DESC,
+  CASE WHEN $4::text = 'filename' AND $5::text <> 'desc' THEN s.filename END ASC,
+  bh.created_at DESC,
+  bh.id DESC
+LIMIT $6 OFFSET $7;
 
 -- name: CountHeadersFiltered :one
 SELECT COUNT(*)::bigint

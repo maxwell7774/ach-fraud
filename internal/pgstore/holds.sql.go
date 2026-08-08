@@ -577,8 +577,24 @@ WHERE ($1::text = '' OR h.status = $1)
        OR be.trace ILIKE '%' || $2 || '%')
   AND ($3::date IS NULL OR bh.effective_date >= $3::date)
   AND ($4::date IS NULL OR bh.effective_date <= $4::date)
-ORDER BY h.created_at DESC
-LIMIT $5
+ORDER BY
+  CASE WHEN $5::text = 'amount' AND $6::text = 'desc' THEN be.amount END DESC,
+  CASE WHEN $5::text = 'amount' AND $6::text <> 'desc' THEN be.amount END ASC,
+  CASE WHEN $5::text = 'filename' AND $6::text = 'desc' THEN s.filename END DESC,
+  CASE WHEN $5::text = 'filename' AND $6::text <> 'desc' THEN s.filename END ASC,
+  CASE WHEN $5::text = 'effective' AND $6::text = 'desc' THEN bh.effective_date END DESC,
+  CASE WHEN $5::text = 'effective' AND $6::text <> 'desc' THEN bh.effective_date END ASC,
+  CASE WHEN $5::text = 'receiver' AND $6::text = 'desc' THEN be.receiver_name END DESC,
+  CASE WHEN $5::text = 'receiver' AND $6::text <> 'desc' THEN be.receiver_name END ASC,
+  CASE WHEN $5::text = 'account' AND $6::text = 'desc' THEN be.receiver_account END DESC,
+  CASE WHEN $5::text = 'account' AND $6::text <> 'desc' THEN be.receiver_account END ASC,
+  CASE WHEN $5::text = 'rdfi' AND $6::text = 'desc' THEN be.rdfi END DESC,
+  CASE WHEN $5::text = 'rdfi' AND $6::text <> 'desc' THEN be.rdfi END ASC,
+  CASE WHEN $5::text = 'status' AND $6::text = 'desc' THEN h.status END DESC,
+  CASE WHEN $5::text = 'status' AND $6::text <> 'desc' THEN h.status END ASC,
+  h.created_at DESC,
+  h.id DESC
+LIMIT $7 OFFSET $8
 `
 
 type ListHoldsFilteredParams struct {
@@ -586,7 +602,10 @@ type ListHoldsFilteredParams struct {
 	Column2 string
 	Column3 pgtype.Date
 	Column4 pgtype.Date
+	Column5 string
+	Column6 string
 	Limit   int32
+	Offset  int32
 }
 
 type ListHoldsFilteredRow struct {
@@ -615,7 +634,10 @@ func (q *Queries) ListHoldsFiltered(ctx context.Context, arg ListHoldsFilteredPa
 		arg.Column2,
 		arg.Column3,
 		arg.Column4,
+		arg.Column5,
+		arg.Column6,
 		arg.Limit,
+		arg.Offset,
 	)
 	if err != nil {
 		return nil, err

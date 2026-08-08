@@ -14,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -161,6 +160,20 @@ func (s *Server) actor(r *http.Request) string {
 		return a
 	}
 	return "web"
+}
+
+// reviewActor resolves the reviewer identity for an audit action. With auth
+// enabled the signed-in user is authoritative — anything the client sent is
+// ignored, so a caller cannot spoof the reviewer. In dev mode the request body
+// actor (or X-Actor header) is used.
+func (s *Server) reviewActor(r *http.Request, bodyActor string) string {
+	if s.sessions != nil {
+		return s.actor(r)
+	}
+	if bodyActor != "" {
+		return bodyActor
+	}
+	return s.actor(r)
 }
 
 // spaHandler serves the built SPA with history routing: real files are served
@@ -470,13 +483,12 @@ func (s *Server) handleListHolds(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	rows, err := s.deps.Store.ListHoldsFiltered(ctx, status, search, start, end, 5000)
+	rows, err := s.deps.Store.ListHoldsFiltered(ctx, status, search, start, end, q.Get("sort"), q.Get("dir"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	sortHolds(rows, q.Get("sort"), q.Get("dir"))
-	writeJSON(w, http.StatusOK, holdsPage{Holds: slicePage(rows, page, pageSize), Total: total})
+	writeJSON(w, http.StatusOK, holdsPage{Holds: rows, Total: total})
 }
 
 type bulkRequest struct {
@@ -496,10 +508,7 @@ func (s *Server) handleBulk(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("no holds selected"))
 		return
 	}
-	actor := req.Actor
-	if actor == "" {
-		actor = s.actor(r)
-	}
+	actor := s.reviewActor(r, req.Actor)
 	var count int
 	var err error
 	switch req.Action {
@@ -531,13 +540,12 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	rows, err := s.deps.Store.ListEntriesFiltered(ctx, search, start, end, 5000)
+	rows, err := s.deps.Store.ListEntriesFiltered(ctx, search, start, end, q.Get("sort"), q.Get("dir"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	sortEntries(rows, q.Get("sort"), q.Get("dir"))
-	writeJSON(w, http.StatusOK, entriesPage{Entries: slicePage(rows, page, pageSize), Total: total})
+	writeJSON(w, http.StatusOK, entriesPage{Entries: rows, Total: total})
 }
 
 func (s *Server) handleListHeaders(w http.ResponseWriter, r *http.Request) {
@@ -553,13 +561,12 @@ func (s *Server) handleListHeaders(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	rows, err := s.deps.Store.ListHeadersFiltered(ctx, search, start, end, 5000)
+	rows, err := s.deps.Store.ListHeadersFiltered(ctx, search, start, end, q.Get("sort"), q.Get("dir"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	sortHeaders(rows, q.Get("sort"), q.Get("dir"))
-	writeJSON(w, http.StatusOK, headersPage{Headers: slicePage(rows, page, pageSize), Total: total})
+	writeJSON(w, http.StatusOK, headersPage{Headers: rows, Total: total})
 }
 
 func (s *Server) handleArtifactContent(w http.ResponseWriter, r *http.Request) {
@@ -604,6 +611,11 @@ type headersPage struct {
 	Total   int64                `json:"total"`
 }
 
+type submissionsPage struct {
+	Submissions []domain.Submission `json:"submissions"`
+	Total       int64               `json:"total"`
+}
+
 type eventsPage struct {
 	Events []domain.Event `json:"events"`
 	Total  int64          `json:"total"`
@@ -630,123 +642,6 @@ func pageParams(r *http.Request) (page, size int) {
 		size = 25
 	}
 	return page, size
-}
-
-func slicePage[T any](rows []T, page, size int) []T {
-	start := (page - 1) * size
-	if start >= len(rows) {
-		return []T{}
-	}
-	end := start + size
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return rows[start:end]
-}
-
-func sortHolds(rows []domain.Hold, col, dir string) {
-	valid := map[string]bool{"amount": true, "status": true, "trace": true, "rdfi": true,
-		"receiver": true, "account": true, "effective": true, "created": true, "filename": true}
-	if !valid[col] {
-		return // keep the SQL order (created_at DESC)
-	}
-	asc := dir != "desc"
-	sort.Slice(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		var less bool
-		switch col {
-		case "amount":
-			less = a.EntryAmount < b.EntryAmount
-		case "status":
-			less = a.Status < b.Status
-		case "trace":
-			less = a.EntryTrace < b.EntryTrace
-		case "rdfi":
-			less = a.EntryRdfi < b.EntryRdfi
-		case "receiver":
-			less = a.EntryReceiverName < b.EntryReceiverName
-		case "account":
-			less = a.EntryReceiverAcct < b.EntryReceiverAcct
-		case "effective":
-			less = effStr(a.EffectiveDate) < effStr(b.EffectiveDate)
-		case "created":
-			less = a.CreatedAt.Before(b.CreatedAt)
-		default:
-			less = a.Filename < b.Filename
-		}
-		if asc {
-			return less
-		}
-		return !less
-	})
-}
-
-func sortEntries(rows []domain.BatchEntry, col, dir string) {
-	valid := map[string]bool{"amount": true, "tran_code": true, "trace": true, "rdfi": true,
-		"receiver": true, "account": true, "effective": true, "filename": true}
-	if !valid[col] {
-		return
-	}
-	asc := dir != "desc"
-	sort.Slice(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		var less bool
-		switch col {
-		case "amount":
-			less = a.Amount < b.Amount
-		case "tran_code":
-			less = a.TranCode < b.TranCode
-		case "trace":
-			less = a.Trace < b.Trace
-		case "rdfi":
-			less = a.Rdfi < b.Rdfi
-		case "receiver":
-			less = a.ReceiverName < b.ReceiverName
-		case "account":
-			less = a.ReceiverAccount < b.ReceiverAccount
-		case "effective":
-			less = effStr(a.EffectiveDate) < effStr(b.EffectiveDate)
-		default:
-			less = a.Filename < b.Filename
-		}
-		if asc {
-			return less
-		}
-		return !less
-	})
-}
-
-func sortHeaders(rows []domain.BatchHeader, col, dir string) {
-	valid := map[string]bool{"customer_id": true, "company_name": true, "effective": true, "filename": true}
-	if !valid[col] {
-		return
-	}
-	asc := dir != "desc"
-	sort.Slice(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		var less bool
-		switch col {
-		case "customer_id":
-			less = a.CustomerID < b.CustomerID
-		case "company_name":
-			less = a.CompanyName < b.CompanyName
-		case "effective":
-			less = effStr(a.EffectiveDate) < effStr(b.EffectiveDate)
-		default:
-			less = a.Filename < b.Filename
-		}
-		if asc {
-			return less
-		}
-		return !less
-	})
-}
-
-func effStr(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	return t.Format("2006-01-02")
 }
 
 func (s *Server) handleGetHold(w http.ResponseWriter, r *http.Request) {
@@ -795,10 +690,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	actor := req.Actor
-	if actor == "" {
-		actor = s.actor(r)
-	}
+	actor := s.reviewActor(r, req.Actor)
 	if err := pipeline.ApproveHold(r.Context(), s.deps, id, actor, req.Note); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
@@ -817,10 +709,7 @@ func (s *Server) handleDecline(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	actor := req.Actor
-	if actor == "" {
-		actor = s.actor(r)
-	}
+	actor := s.reviewActor(r, req.Actor)
 	if err := pipeline.DeclineHold(r.Context(), s.deps, id, actor, req.Note); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
@@ -829,14 +718,25 @@ func (s *Server) handleDecline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListSubmissions(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	limit := intParam(r, "limit", 100, 500)
-	subs, err := s.deps.Store.ListSubmissions(r.Context(), status, limit)
+	q := r.URL.Query()
+	status := q.Get("status")
+	search := q.Get("q")
+	start := parseDate(q.Get("start_date"))
+	end := parseDate(q.Get("end_date"))
+	page, pageSize := pageParams(r)
+
+	ctx := r.Context()
+	total, err := s.deps.Store.CountSubmissionsFiltered(ctx, status, search, start, end)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, subs)
+	rows, err := s.deps.Store.ListSubmissionsFiltered(ctx, status, search, start, end, q.Get("sort"), q.Get("dir"), pageSize, (page-1)*pageSize)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, submissionsPage{Submissions: rows, Total: total})
 }
 
 func (s *Server) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
@@ -872,14 +772,19 @@ func (s *Server) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	search := q.Get("q")
+	start := parseDate(q.Get("start_date"))
+	end := parseDate(q.Get("end_date"))
 	page, pageSize := pageParams(r)
+
 	ctx := r.Context()
-	total, err := s.deps.Store.CountEvents(ctx)
+	total, err := s.deps.Store.CountEventsFiltered(ctx, search, start, end)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	events, err := s.deps.Store.ListEvents(ctx, pageSize, (page-1)*pageSize)
+	events, err := s.deps.Store.ListEventsFiltered(ctx, search, start, end, q.Get("sort"), q.Get("dir"), pageSize, (page-1)*pageSize)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -894,6 +799,7 @@ type artifactSum struct {
 	Entries int    `json:"entries"`
 	Total   int64  `json:"total"`
 	Error   string `json:"error,omitempty"`
+	Pruned  bool   `json:"pruned,omitempty"`
 }
 
 type entryMatch struct {
@@ -907,6 +813,7 @@ type entryMatch struct {
 
 type submissionVerify struct {
 	Verified  bool                   `json:"verified"`
+	Pruned    bool                   `json:"pruned"`
 	Artifacts map[string]artifactSum `json:"artifacts"`
 	Issues    []string               `json:"issues"`
 	Entries   []entryMatch           `json:"entries"`
@@ -930,8 +837,18 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 
 	sums := map[string]artifactSum{}
 	files := map[domain.ArtifactKind]*ach.File{}
+	pruned := map[domain.ArtifactKind]bool{}
 	for _, a := range arts {
 		sum := artifactSum{Present: true}
+		if a.State == domain.ArtifactPruned {
+			// Bytes are intentionally gone after the retention window; report
+			// it as pruned rather than a failure to read.
+			sum.Present = false
+			sum.Pruned = true
+			sums[string(a.Kind)] = sum
+			pruned[a.Kind] = true
+			continue
+		}
 		data, err := s.deps.Files.Get(ctx, a.Checksum)
 		if err != nil {
 			sum.Error = err.Error()
@@ -955,6 +872,15 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 	cleaned, hasCleaned := files[domain.ArtifactCleaned]
 
 	var issues []string
+	// Verification needs the bytes; a pruned artifact means it simply cannot
+	// run, which is expected after retention, not an error.
+	for _, kind := range []domain.ArtifactKind{
+		domain.ArtifactOriginal, domain.ArtifactFixed, domain.ArtifactCleaned,
+	} {
+		if pruned[kind] {
+			issues = append(issues, fmt.Sprintf("%s was pruned; verification unavailable", kind))
+		}
+	}
 	if hasOrig && hasFixed {
 		if err := achp.VerifySame(orig, fixed); err != nil {
 			issues = append(issues, "fixed does not match original: "+err.Error())
@@ -985,6 +911,7 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, submissionVerify{
 		Verified:  len(issues) == 0 && hasCleaned,
+		Pruned:    len(pruned) > 0,
 		Artifacts: sums,
 		Issues:    issues,
 		Entries:   entries,

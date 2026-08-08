@@ -18,7 +18,7 @@ go build -o bin/ach .
 
 echo "==> reset database"
 psql "$DB" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" >/dev/null
-GOOSE_DRIVER=postgres GOOSE_DBSTRING="$DB" GOOSE_MIGRATION_DIR=./sql/schema goose up >/dev/null
+GOOSE_DRIVER=postgres GOOSE_DBSTRING="$DB" GOOSE_MIGRATION_DIR=./internal/migrate/schema goose up >/dev/null
 
 echo "==> clean directories"
 rm -rf input_files artifact_store outgoing_files

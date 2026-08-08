@@ -46,9 +46,9 @@ type Store interface {
 	ListEntriesBySubmission(ctx context.Context, submissionID uuid.UUID) ([]domain.BatchEntry, error)
 	HasEntryByRdfiAccount(ctx context.Context, rdfi, account string) (bool, error)
 	SumVelocity(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error)
-	ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchEntry, error)
+	ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error)
 	CountEntriesFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error)
-	ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, limit int) ([]domain.BatchHeader, error)
+	ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchHeader, error)
 	CountHeadersFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error)
 
 	// Holds
@@ -57,7 +57,7 @@ type Store interface {
 	ListHoldsByReleaseArtifact(ctx context.Context, artifactID uuid.UUID) ([]domain.Hold, error)
 	ListAllHolds(ctx context.Context) ([]domain.Hold, error)
 	ListHoldsByStatus(ctx context.Context, status string, limit int) ([]domain.Hold, error)
-	ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, limit int) ([]domain.Hold, error)
+	ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Hold, error)
 	CountHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error)
 	CountHoldsByStatus(ctx context.Context) (map[string]int64, error)
 	GetHold(ctx context.Context, id uuid.UUID) (domain.Hold, error)
@@ -78,6 +78,8 @@ type Store interface {
 
 	// Submissions
 	ListSubmissions(ctx context.Context, status string, limit int) ([]domain.Submission, error)
+	ListSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Submission, error)
+	CountSubmissionsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error)
 
 	// Retention
 	ListArtifactsByStateOlderThan(ctx context.Context, state domain.ArtifactState, cutoff time.Time) ([]domain.Artifact, error)
@@ -96,7 +98,9 @@ type Store interface {
 	// Events
 	AppendEvent(ctx context.Context, typ string, ref *uuid.UUID, payload json.RawMessage) error
 	ListEvents(ctx context.Context, limit, offset int) ([]domain.Event, error)
+	ListEventsFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Event, error)
 	CountEvents(ctx context.Context) (int64, error)
+	CountEventsFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error)
 }
 
 // Files is a content-addressed byte store for artifacts. The checksum is the
