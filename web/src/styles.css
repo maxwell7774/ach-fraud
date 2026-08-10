@@ -606,17 +606,12 @@ th.sort-asc .sort-icon, th.sort-desc .sort-icon { color: var(--gold); }
 }
 
 /* Popovers (row actions, custom select)
-   Native popover anchored to its invoker via the implicit anchor reference.
-   The UA default `inset: 0; margin: auto` would center the popover, so both are
-   reset before applying anchor positioning (per MDN). */
+   Native popover API anchored to its `popovertarget` invoker; `position-area`
+   places each menu against that anchor (Kevin Powell, "Stop wasting time with
+   JavaScript!"). Requires Chrome 131+ (implicit anchor positioning). */
 .popover-menu {
-  margin: 0;
-  inset: auto;
   position: fixed;
-  top: anchor(bottom);
-  left: anchor(left);
-  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
-  position-try-options: flip-block, flip-inline, flip-block flip-inline;
+  position-area: bottom span-right;
   border: 1px solid var(--border);
   padding: 4px;
   background: var(--surface);
@@ -640,6 +635,11 @@ th.sort-asc .sort-icon, th.sort-desc .sort-icon { color: var(--gold); }
     opacity: 0;
     transform: translateY(-4px);
   }
+}
+/* The date picker calendar keeps its left edge under the field; the action
+   menu and page-size select hug the right edge of their buttons. */
+.datepicker-menu {
+  position-area: bottom span-left;
 }
 .action-popover .btn {
   display: flex;
