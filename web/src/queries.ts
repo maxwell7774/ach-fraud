@@ -7,8 +7,14 @@ export const dashboardQuery = query(() => api.dashboard(), "dashboard");
 export const holdsQuery = query((p: ListParams) => api.holds(p), "holds");
 export const holdQuery = query((id: string) => api.hold(id), "hold");
 export const submissionsQuery = query((p: ListParams) => api.submissions(p), "submissions");
-export const submissionQuery = query((id: string) => api.submission(id), "submission");
-export const verifyQuery = query((id: string) => api.verifySubmission(id), "verify");
+export const submissionQuery = query(
+  (p: { id: string } & ListParams) => api.submission(p.id, p),
+  "submission"
+);
+export const verifyQuery = query(
+  (p: { id: string } & ListParams) => api.verifySubmission(p.id, p),
+  "verify"
+);
 export const entriesQuery = query((p: ListParams) => api.entries(p), "entries");
 export const headersQuery = query((p: ListParams) => api.headers(p), "headers");
 export const eventsQuery = query((p: ListParams) => api.events(p), "events");

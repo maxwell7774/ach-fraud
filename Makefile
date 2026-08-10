@@ -1,10 +1,16 @@
-.PHONY: build vet test fmt sqlc web migrate-up migrate-reset e2e seed clean
+.PHONY: build vet test lint typecheck fmt sqlc web migrate-up migrate-reset e2e seed clean
 
 build: web
 	go build -o bin/ach .
 
 vet:
 	go vet ./...
+
+lint:
+	go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+
+typecheck:
+	cd web && bunx tsc --noEmit
 
 test:
 	go test ./...

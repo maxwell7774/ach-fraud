@@ -70,15 +70,6 @@ func (s *Sender) Send(_ context.Context, a domain.Artifact, _ []byte) error {
 	return nil
 }
 
-// Sent returns the artifacts transmitted so far.
-func (s *Sender) Sent() []domain.Artifact {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]domain.Artifact, len(s.sent))
-	copy(out, s.sent)
-	return out
-}
-
 func (s *Sender) SentKinds() map[domain.ArtifactKind][]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -6,8 +6,6 @@ RETURNING *;
 -- name: ListEvents :many
 SELECT * FROM events ORDER BY created_at DESC LIMIT $1 OFFSET $2;
 
--- name: CountEvents :one
-SELECT COUNT(*)::bigint FROM events;
 -- name: CountEventsFiltered :one
 SELECT COUNT(*)::bigint FROM events
 WHERE ($1::text = '' OR type ILIKE '%' || $1 || '%'

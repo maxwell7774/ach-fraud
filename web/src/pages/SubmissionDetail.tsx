@@ -3,13 +3,21 @@ import { useParams, A } from "@solidjs/router";
 import { createAsync } from "@solidjs/router";
 import { submissionQuery, verifyQuery } from "../queries";
 import { api, dollars, fmtDateTime } from "../api";
-import { Badge, EmptyState, FileViewer, HoldTable, Loading } from "../components";
+import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination } from "../components";
 import { ArrowLeftIcon } from "../icons";
 
 export default function SubmissionDetail() {
   const params = useParams<{ id: string }>();
-  const sub = createAsync(() => submissionQuery(params.id));
-  const verify = createAsync(() => verifyQuery(params.id));
+  const [holdPage, setHoldPage] = createSignal(1);
+  const [holdPageSize, setHoldPageSize] = createSignal(25);
+  const [entryPage, setEntryPage] = createSignal(1);
+  const [entryPageSize, setEntryPageSize] = createSignal(25);
+  const sub = createAsync(() =>
+    submissionQuery({ id: params.id, page: holdPage(), pageSize: holdPageSize() })
+  );
+  const verify = createAsync(() =>
+    verifyQuery({ id: params.id, page: entryPage(), pageSize: entryPageSize() })
+  );
   const [viewing, setViewing] = createSignal<string | null>(null);
   const [content, setContent] = createSignal("");
 
@@ -135,7 +143,7 @@ export default function SubmissionDetail() {
                   </Show>
                 </div>
 
-                <Show when={v().entries.length > 0}>
+                <Show when={v().entries_total > 0}>
                   <h2 class="section">Entry comparison</h2>
                   <div class="table-wrap">
                     <table class="responsive">
@@ -166,6 +174,15 @@ export default function SubmissionDetail() {
                         </For>
                       </tbody>
                     </table>
+                    <Pagination
+                      page={entryPage()}
+                      pageSize={entryPageSize()}
+                      total={v().entries_total}
+                      onChange={(p, sz) => {
+                        setEntryPage(p);
+                        setEntryPageSize(sz);
+                      }}
+                    />
                   </div>
                 </Show>
               </>
@@ -173,8 +190,17 @@ export default function SubmissionDetail() {
           </Show>
 
           <h2 class="section">Holds</h2>
-          <Show when={s().holds.length > 0} fallback={<p class="empty">No holds for this file.</p>}>
+          <Show when={s().holds_total > 0} fallback={<p class="empty">No holds for this file.</p>}>
             <HoldTable holds={s().holds} />
+            <Pagination
+              page={holdPage()}
+              pageSize={holdPageSize()}
+              total={s().holds_total}
+              onChange={(p, sz) => {
+                setHoldPage(p);
+                setHoldPageSize(sz);
+              }}
+            />
           </Show>
 
           <h2 class="section">Jobs</h2>

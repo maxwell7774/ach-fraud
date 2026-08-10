@@ -69,6 +69,7 @@ export interface Job {
 export interface SubmissionDetail extends Submission {
   artifacts: Artifact[];
   holds: Hold[];
+  holds_total: number;
   jobs: Job[];
 }
 
@@ -177,6 +178,7 @@ export interface SubmissionVerify {
   artifacts: Record<string, ArtifactSum>;
   issues: string[];
   entries: EntryMatch[];
+  entries_total: number;
 }
 
 export interface ListParams {
@@ -251,8 +253,8 @@ export const api = {
       body: JSON.stringify({ action, ids, note: body.note, actor: body.actor }),
     }),
   submissions: (p: ListParams = {}) => req<SubmissionsPage>(`/api/submissions${qs(p)}`),
-  submission: (id: string) => req<SubmissionDetail>(`/api/submissions/${id}`),
-  verifySubmission: (id: string) => req<SubmissionVerify>(`/api/submissions/${id}/verify`),
+  submission: (id: string, p: ListParams = {}) => req<SubmissionDetail>(`/api/submissions/${id}${qs(p)}`),
+  verifySubmission: (id: string, p: ListParams = {}) => req<SubmissionVerify>(`/api/submissions/${id}/verify${qs(p)}`),
   entries: (p: ListParams = {}) => req<EntriesPage>(`/api/entries${qs(p)}`),
   headers: (p: ListParams = {}) => req<HeadersPage>(`/api/headers${qs(p)}`),
   artifactContent: (id: string) =>

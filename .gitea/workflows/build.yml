@@ -20,6 +20,8 @@ jobs:
         run: make fmt
       - name: vet
         run: make vet
+      - name: lint
+        run: make lint
       - name: test
         run: make test
 
@@ -29,7 +31,7 @@ jobs:
           cd web
           bun install
           bun run build
-          bunx tsc --noEmit
+          bun run typecheck
 
   publish:
     # Push the image to the Gitea container registry on main and version tags.

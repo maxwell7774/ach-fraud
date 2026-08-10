@@ -99,7 +99,6 @@ type Store interface {
 	AppendEvent(ctx context.Context, typ string, ref *uuid.UUID, payload json.RawMessage) error
 	ListEvents(ctx context.Context, limit, offset int) ([]domain.Event, error)
 	ListEventsFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Event, error)
-	CountEvents(ctx context.Context) (int64, error)
 	CountEventsFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error)
 }
 

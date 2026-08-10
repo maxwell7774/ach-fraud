@@ -18,11 +18,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Noop discards every notification. It keeps the alerting boundary real while
-// channels are unconfigured.
-//
-// (defined in notifier.go)
-
 // Event types we email about. Kept as literals so this adapter stays a leaf
 // (no dependency back on the pipeline package).
 const (

@@ -36,17 +36,6 @@ func (q *Queries) AppendEvent(ctx context.Context, arg AppendEventParams) (Event
 	return i, err
 }
 
-const countEvents = `-- name: CountEvents :one
-SELECT COUNT(*)::bigint FROM events
-`
-
-func (q *Queries) CountEvents(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countEvents)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const countEventsFiltered = `-- name: CountEventsFiltered :one
 SELECT COUNT(*)::bigint FROM events
 WHERE ($1::text = '' OR type ILIKE '%' || $1 || '%'

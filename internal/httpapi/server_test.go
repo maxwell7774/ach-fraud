@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,10 +11,12 @@ import (
 	"time"
 
 	"github.com/27actions/ach/internal/auth"
+	"github.com/27actions/ach/internal/checksum"
 	"github.com/27actions/ach/internal/domain"
 	"github.com/27actions/ach/internal/fakeports"
 	"github.com/27actions/ach/internal/notifier"
 	"github.com/27actions/ach/internal/pipeline"
+	"github.com/27actions/ach/internal/testutil"
 
 	"github.com/google/uuid"
 )
@@ -264,7 +267,6 @@ func TestAuthFullFlow(t *testing.T) {
 	// Callback exchanges the code, upserts the user, and issues a session.
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil).WithContext(context.Background()))
-	rr.HeaderMap.Add("Cookie", auth.OAuthCookieName+"="+oauth)
 	// re-serve with the cookie set
 	req := httptest.NewRequest("GET", "/api/auth/callback?code=abc&state="+parts[0], nil)
 	req.AddCookie(&http.Cookie{Name: auth.OAuthCookieName, Value: oauth})
@@ -497,6 +499,96 @@ func TestVerifyReportsPruned(t *testing.T) {
 	}
 	if len(v.Issues) != 1 || !strings.Contains(v.Issues[0], "pruned; verification unavailable") {
 		t.Fatalf("issues = %v, want a pruned note", v.Issues)
+	}
+}
+
+func TestSubmissionDetailPaginatesHolds(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "many.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	if err != nil {
+		t.Fatalf("hdr: %v", err)
+	}
+	for i := 0; i < 60; i++ {
+		en, err := st.CreateBatchEntry(ctx, domain.BatchEntry{
+			HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "100000001",
+			Amount: 200000, TranCode: 22, Trace: fmt.Sprintf("t%d", i),
+		})
+		if err != nil {
+			t.Fatalf("entry: %v", err)
+		}
+		if _, err := st.CreateHold(ctx, en.ID, domain.HoldPending, ""); err != nil {
+			t.Fatalf("hold: %v", err)
+		}
+	}
+
+	var d submissionDetail
+	rr := get(t, s, "/api/submissions/"+sub.ID.String()+"?page=2&pageSize=25")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.HoldsTotal != 60 {
+		t.Fatalf("holds_total = %d, want 60", d.HoldsTotal)
+	}
+	if len(d.Holds) != 25 {
+		t.Fatalf("page 2 holds = %d, want 25", len(d.Holds))
+	}
+	rr = get(t, s, "/api/submissions/"+sub.ID.String()+"?page=3&pageSize=25")
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(d.Holds) != 10 {
+		t.Fatalf("page 3 holds = %d, want 10", len(d.Holds))
+	}
+}
+
+func TestVerifyPaginatesEntries(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "entries.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	ents := make([]testutil.Entry, 60)
+	for i := range ents {
+		ents[i] = testutil.Entry{Account: "100000001", Name: "Jane Doe", Amount: 1000, RDFI: "231380104", Trace: i + 1}
+	}
+	data, err := testutil.CreditFile(ents, "260115")
+	if err != nil {
+		t.Fatalf("credit file: %v", err)
+	}
+	sum := checksum.Bytes(data)
+	for _, kind := range []domain.ArtifactKind{domain.ArtifactOriginal, domain.ArtifactFixed} {
+		if _, err := st.CreateArtifact(ctx, domain.Artifact{
+			SubmissionID: sub.ID, Kind: kind, Checksum: sum, State: domain.ArtifactPublished,
+		}); err != nil {
+			t.Fatalf("artifact %s: %v", kind, err)
+		}
+	}
+	if err := s.deps.Files.Put(ctx, sum, data); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	var v submissionVerify
+	rr := get(t, s, "/api/submissions/"+sub.ID.String()+"/verify?page=2&pageSize=25")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("verify = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v.EntriesTotal != 60 {
+		t.Fatalf("entries_total = %d, want 60", v.EntriesTotal)
+	}
+	if len(v.Entries) != 25 {
+		t.Fatalf("page 2 entries = %d, want 25", len(v.Entries))
 	}
 }
 

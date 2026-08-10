@@ -82,7 +82,8 @@ func TestSessionExpiry(t *testing.T) {
 }
 
 func TestHashTokenStable(t *testing.T) {
-	if HashToken("abc") != HashToken("abc") {
+	first, second := HashToken("abc"), HashToken("abc")
+	if first != second {
 		t.Fatal("hash not deterministic")
 	}
 	if HashToken("abc") == HashToken("abd") {
