@@ -14,6 +14,7 @@ export interface Hold {
   effective_date?: string;
   created_at: string;
   customer_id: string;
+  company_name: string;
   filename: string;
 }
 
@@ -66,11 +67,32 @@ export interface Job {
   run_at: string;
 }
 
+export interface Verification {
+  submission_id: string;
+  verified: boolean;
+  issues: string;
+  checked_at: string;
+}
+
+export interface Recipient {
+  id: string;
+  email: string;
+  name: string;
+  enabled: boolean;
+  alert_types: string[];
+  created_at: string;
+}
+
+export interface RecipientsPage {
+  recipients: Recipient[];
+}
+
 export interface SubmissionDetail extends Submission {
   artifacts: Artifact[];
   holds: Hold[];
   holds_total: number;
   jobs: Job[];
+  verification?: Verification;
 }
 
 export interface BatchEntry {
@@ -166,9 +188,12 @@ export interface ArtifactSum {
 export interface EntryMatch {
   trace: string;
   amount: number;
+  sender: string;
+  sender_name: string;
   original_account: string;
   fixed_account: string;
   cleaned_account: string;
+  release_account: string;
   receiver_kept: boolean;
 }
 
@@ -190,6 +215,13 @@ export interface ListParams {
   pageSize?: number;
   sort?: string;
   dir?: string;
+}
+
+export interface RecipientInput {
+  email: string;
+  name: string;
+  enabled: boolean;
+  alert_types: string[];
 }
 
 export interface Me {
@@ -263,6 +295,12 @@ export const api = {
       return r.text();
     }),
   events: (p: ListParams = {}) => req<EventsPage>(`/api/events${qs(p)}`),
+  recipients: () => req<RecipientsPage>("/api/recipients"),
+  createRecipient: (body: RecipientInput) =>
+    req<Recipient>("/api/recipients", { method: "POST", body: JSON.stringify(body) }),
+  updateRecipient: (id: string, body: RecipientInput) =>
+    req<Recipient>(`/api/recipients/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteRecipient: (id: string) => req(`/api/recipients/${id}`, { method: "DELETE" }),
 };
 
 export function dollars(cents: number): string {
@@ -292,6 +330,7 @@ const LABELS: Record<string, string> = {
   cleaned: "Cleaned",
   original: "Original",
   fixed: "Fixed",
+  super_admin: "Super admin",
 };
 
 // human renders an internal snake_case status/state as plain English.

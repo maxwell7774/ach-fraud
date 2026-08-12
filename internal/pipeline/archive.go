@@ -59,5 +59,5 @@ func ArchiveSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) erro
 	}); err != nil {
 		return err
 	}
-	return emit(ctx, d, EvSubmissionArchived, &submissionID, nil)
+	return Emit(ctx, d, EvSubmissionArchived, &submissionID, nil)
 }

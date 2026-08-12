@@ -14,6 +14,7 @@ import (
 const countHoldsByStatus = `-- name: CountHoldsByStatus :many
 SELECT h.status, COUNT(*)::bigint AS count
 FROM holds h
+WHERE h.status = 'pending' OR h.updated_at >= $1::timestamptz
 GROUP BY h.status
 ORDER BY h.status
 `
@@ -23,8 +24,11 @@ type CountHoldsByStatusRow struct {
 	Count  int64
 }
 
-func (q *Queries) CountHoldsByStatus(ctx context.Context) ([]CountHoldsByStatusRow, error) {
-	rows, err := q.db.Query(ctx, countHoldsByStatus)
+// Open pending holds (the live review queue) always count, because they are the
+// call to action; resolved statuses count only when decided since the cutoff,
+// so the dashboard shows current pending alongside 7-day activity.
+func (q *Queries) CountHoldsByStatus(ctx context.Context, dollar_1 pgtype.Timestamptz) ([]CountHoldsByStatusRow, error) {
+	rows, err := q.db.Query(ctx, countHoldsByStatus, dollar_1)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +145,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -167,6 +171,7 @@ type GetHoldByIDRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -190,6 +195,7 @@ func (q *Queries) GetHoldByID(ctx context.Context, id pgtype.UUID) (GetHoldByIDR
 		&i.EffectiveDate,
 		&i.SubmissionID,
 		&i.CustomerID,
+		&i.CompanyName,
 		&i.Filename,
 	)
 	return i, err
@@ -200,7 +206,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -226,6 +232,7 @@ type ListAllHoldsRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -255,6 +262,7 @@ func (q *Queries) ListAllHolds(ctx context.Context) ([]ListAllHoldsRow, error) {
 			&i.EffectiveDate,
 			&i.SubmissionID,
 			&i.CustomerID,
+			&i.CompanyName,
 			&i.Filename,
 		); err != nil {
 			return nil, err
@@ -339,7 +347,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -366,6 +374,7 @@ type ListHoldsByReleaseArtifactRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -395,6 +404,7 @@ func (q *Queries) ListHoldsByReleaseArtifact(ctx context.Context, releaseArtifac
 			&i.EffectiveDate,
 			&i.SubmissionID,
 			&i.CustomerID,
+			&i.CompanyName,
 			&i.Filename,
 		); err != nil {
 			return nil, err
@@ -412,7 +422,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -445,6 +455,7 @@ type ListHoldsByStatusRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -474,6 +485,7 @@ func (q *Queries) ListHoldsByStatus(ctx context.Context, arg ListHoldsByStatusPa
 			&i.EffectiveDate,
 			&i.SubmissionID,
 			&i.CustomerID,
+			&i.CompanyName,
 			&i.Filename,
 		); err != nil {
 			return nil, err
@@ -491,7 +503,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -518,6 +530,7 @@ type ListHoldsBySubmissionRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -547,6 +560,7 @@ func (q *Queries) ListHoldsBySubmission(ctx context.Context, submissionID pgtype
 			&i.EffectiveDate,
 			&i.SubmissionID,
 			&i.CustomerID,
+			&i.CompanyName,
 			&i.Filename,
 		); err != nil {
 			return nil, err
@@ -564,7 +578,7 @@ SELECT h.id, h.entry_id, h.status, h.release_artifact_id, h.created_at, h.update
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -590,6 +604,8 @@ ORDER BY
   CASE WHEN $5::text = 'account' AND $6::text <> 'desc' THEN be.receiver_account END ASC,
   CASE WHEN $5::text = 'rdfi' AND $6::text = 'desc' THEN be.rdfi END DESC,
   CASE WHEN $5::text = 'rdfi' AND $6::text <> 'desc' THEN be.rdfi END ASC,
+  CASE WHEN $5::text = 'customer' AND $6::text = 'desc' THEN bh.customer_id END DESC,
+  CASE WHEN $5::text = 'customer' AND $6::text <> 'desc' THEN bh.customer_id END ASC,
   CASE WHEN $5::text = 'status' AND $6::text = 'desc' THEN h.status END DESC,
   CASE WHEN $5::text = 'status' AND $6::text <> 'desc' THEN h.status END ASC,
   h.created_at DESC,
@@ -625,6 +641,7 @@ type ListHoldsFilteredRow struct {
 	EffectiveDate        pgtype.Date
 	SubmissionID         pgtype.UUID
 	CustomerID           string
+	CompanyName          string
 	Filename             string
 }
 
@@ -663,6 +680,7 @@ func (q *Queries) ListHoldsFiltered(ctx context.Context, arg ListHoldsFilteredPa
 			&i.EffectiveDate,
 			&i.SubmissionID,
 			&i.CustomerID,
+			&i.CompanyName,
 			&i.Filename,
 		); err != nil {
 			return nil, err

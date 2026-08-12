@@ -8,7 +8,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -22,7 +22,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -36,7 +36,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -49,7 +49,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -60,8 +60,12 @@ ORDER BY h.created_at DESC
 LIMIT $2;
 
 -- name: CountHoldsByStatus :many
+-- Open pending holds (the live review queue) always count, because they are the
+-- call to action; resolved statuses count only when decided since the cutoff,
+-- so the dashboard shows current pending alongside 7-day activity.
 SELECT h.status, COUNT(*)::bigint AS count
 FROM holds h
+WHERE h.status = 'pending' OR h.updated_at >= $1::timestamptz
 GROUP BY h.status
 ORDER BY h.status;
 
@@ -70,7 +74,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id
@@ -96,6 +100,8 @@ ORDER BY
   CASE WHEN $5::text = 'account' AND $6::text <> 'desc' THEN be.receiver_account END ASC,
   CASE WHEN $5::text = 'rdfi' AND $6::text = 'desc' THEN be.rdfi END DESC,
   CASE WHEN $5::text = 'rdfi' AND $6::text <> 'desc' THEN be.rdfi END ASC,
+  CASE WHEN $5::text = 'customer' AND $6::text = 'desc' THEN bh.customer_id END DESC,
+  CASE WHEN $5::text = 'customer' AND $6::text <> 'desc' THEN bh.customer_id END ASC,
   CASE WHEN $5::text = 'status' AND $6::text = 'desc' THEN h.status END DESC,
   CASE WHEN $5::text = 'status' AND $6::text <> 'desc' THEN h.status END ASC,
   h.created_at DESC,
@@ -121,7 +127,7 @@ SELECT h.*, be.trace AS entry_trace, be.rdfi AS entry_rdfi,
        be.receiver_name AS entry_receiver_name,
        be.receiver_account AS entry_receiver_account,
        be.amount AS entry_amount, be.tran_code AS entry_tran_code,
-       bh.effective_date, bh.submission_id, bh.customer_id,
+       bh.effective_date, bh.submission_id, bh.customer_id, bh.company_name,
        s.filename
 FROM holds h
 JOIN batch_entries be ON be.id = h.entry_id

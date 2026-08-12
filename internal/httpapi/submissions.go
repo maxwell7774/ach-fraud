@@ -15,10 +15,11 @@ import (
 
 type submissionDetail struct {
 	domain.Submission
-	Artifacts  []domain.Artifact `json:"artifacts"`
-	Holds      []domain.Hold     `json:"holds"`
-	HoldsTotal int64             `json:"holds_total"`
-	Jobs       []domain.Job      `json:"jobs"`
+	Artifacts    []domain.Artifact    `json:"artifacts"`
+	Holds        []domain.Hold        `json:"holds"`
+	HoldsTotal   int64                `json:"holds_total"`
+	Jobs         []domain.Job         `json:"jobs"`
+	Verification *domain.Verification `json:"verification,omitempty"`
 }
 
 type submissionsPage struct {
@@ -37,9 +38,12 @@ type artifactSum struct {
 type entryMatch struct {
 	Trace        string `json:"trace"`
 	Amount       int64  `json:"amount"`
+	Sender       string `json:"sender"`
+	SenderName   string `json:"sender_name"`
 	OriginalAcct string `json:"original_account"`
 	FixedAcct    string `json:"fixed_account"`
 	CleanedAcct  string `json:"cleaned_account"`
+	ReleaseAcct  string `json:"release_account"`
 	ReceiverKept bool   `json:"receiver_kept"`
 }
 
@@ -107,12 +111,20 @@ func (s *Server) handleGetSubmission(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	if v, err := s.deps.Store.GetVerification(ctx, id); err == nil {
+		detail.Verification = &v
+	} else if !errors.Is(err, domain.ErrNotFound) {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, detail)
 }
 
 // handleVerifySubmission re-parses a submission's artifacts and checks that
-// amounts and receiver accounts hold across the original → fixed → cleaned
-// chain, surfacing any mismatch for review.
+// the amount, receiver, and sender hold across the original → fixed → cleaned
+// chain (and the release legs, when present), surfacing any mismatch for
+// review. Held entries are expected to redirect to the holding account in the
+// cleaned file; a release leg returns the exact amount to the real receiver.
 func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
@@ -128,6 +140,7 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 
 	sums := map[string]artifactSum{}
 	files := map[domain.ArtifactKind]*ach.File{}
+	var releases []*ach.File
 	pruned := map[domain.ArtifactKind]bool{}
 	for _, a := range arts {
 		sum := artifactSum{Present: true}
@@ -155,7 +168,11 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 		sum.Entries = achp.TotalEntries(f)
 		sum.Total = artifactTotal(f)
 		sums[string(a.Kind)] = sum
-		files[a.Kind] = f
+		if a.Kind == domain.ArtifactRelease {
+			releases = append(releases, f)
+		} else {
+			files[a.Kind] = f
+		}
 	}
 
 	orig, hasOrig := files[domain.ArtifactOriginal]
@@ -182,6 +199,7 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 			issues = append(issues, "cleaned amounts do not match fixed: "+err.Error())
 		}
 	}
+	issues = append(issues, senderIssues(orig, fixed, cleaned)...)
 	if hasCleaned && !hasFixed {
 		issues = append(issues, "cleaned artifact exists without a fixed artifact")
 	}
@@ -192,7 +210,16 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 	page, pageSize := pageParams(r)
 	var entries []entryMatch
 	if hasOrig && hasFixed {
-		entries = compareEntries(orig, fixed, cleaned)
+		entries = compareEntries(orig, fixed, cleaned, releases, s.deps.Policy.HoldingAccount)
+	}
+	// Every held entry must have a matching release leg when release bytes
+	// exist; a held entry with no leg means the release is missing a return.
+	if len(releases) > 0 {
+		for _, em := range entries {
+			if em.CleanedAcct == s.deps.Policy.HoldingAccount && em.ReleaseAcct == "" {
+				issues = append(issues, fmt.Sprintf("entry %s held but missing a release leg", em.Trace))
+			}
+		}
 	}
 	total := len(entries)
 	entries = pageSlice(entries, page, pageSize)
@@ -241,7 +268,12 @@ func amountsMatch(fixed, cleaned *ach.File) error {
 	return nil
 }
 
-func compareEntries(orig, fixed, cleaned *ach.File) []entryMatch {
+// compareEntries builds one row per fixed entry showing the money's
+// destination account across the chain: original → fixed → cleaned, plus the
+// release leg (the real receiver again) when a held entry has one. Held entries
+// are identified by their redirect to the holding account in the cleaned file.
+func compareEntries(orig, fixed, cleaned *ach.File, releases []*ach.File, holdingAccount string) []entryMatch {
+	legs := indexReleaseLegs(releases)
 	var out []entryMatch
 	for bi, fb := range fixed.Batches {
 		if bi >= len(orig.Batches) {
@@ -253,10 +285,14 @@ func compareEntries(orig, fixed, cleaned *ach.File) []entryMatch {
 		if cleaned != nil && bi < len(cleaned.Batches) {
 			ce = cleaned.Batches[bi].GetEntries()
 		}
+		sender := fb.GetHeader().CompanyIdentification
+		senderName := fb.GetHeader().CompanyName
 		for ei := range fe {
 			em := entryMatch{
 				Trace:        fe[ei].TraceNumberField(),
 				Amount:       int64(fe[ei].Amount),
+				Sender:       sender,
+				SenderName:   senderName,
 				OriginalAcct: strings.TrimSpace(oe[ei].DFIAccountNumber),
 				FixedAcct:    strings.TrimSpace(fe[ei].DFIAccountNumber),
 				ReceiverKept: oe[ei].DFIAccountNumber == fe[ei].DFIAccountNumber,
@@ -264,7 +300,68 @@ func compareEntries(orig, fixed, cleaned *ach.File) []entryMatch {
 			if ei < len(ce) {
 				em.CleanedAcct = strings.TrimSpace(ce[ei].DFIAccountNumber)
 			}
+			if em.CleanedAcct == holdingAccount {
+				em.ReleaseAcct = popReleaseLeg(legs, fe[ei])
+			}
 			out = append(out, em)
+		}
+	}
+	return out
+}
+
+// indexReleaseLegs indexes release legs by their receiver (amount, routing
+// number, account, tax id) so held entries can be matched to the leg that
+// returns their funds, the same key VerifyRelease uses.
+func indexReleaseLegs(releases []*ach.File) map[string][]*ach.EntryDetail {
+	idx := map[string][]*ach.EntryDetail{}
+	for _, rel := range releases {
+		for _, b := range rel.Batches {
+			for _, leg := range b.GetEntries() {
+				key := releaseLegKey(leg)
+				idx[key] = append(idx[key], leg)
+			}
+		}
+	}
+	return idx
+}
+
+func releaseLegKey(leg *ach.EntryDetail) string {
+	return fmt.Sprintf("%d|%s|%s|%s", leg.Amount, leg.RDFIIdentification+leg.CheckDigit, strings.TrimSpace(leg.DFIAccountNumber), leg.IdentificationNumber)
+}
+
+// popReleaseLeg matches a held fixed entry to one release leg, consuming it so
+// identical legs do not double-match. It returns the leg's destination account,
+// or "" when no leg exists.
+func popReleaseLeg(idx map[string][]*ach.EntryDetail, entry *ach.EntryDetail) string {
+	key := fmt.Sprintf("%d|%s|%s|%s", entry.Amount, entry.RDFIIdentification+entry.CheckDigit, strings.TrimSpace(entry.DFIAccountNumber), entry.IdentificationNumber)
+	list := idx[key]
+	if len(list) == 0 {
+		return ""
+	}
+	idx[key] = list[1:]
+	return strings.TrimSpace(list[0].DFIAccountNumber)
+}
+
+// senderIssues reports batch-level sender (customer id + company name)
+// mismatches across the original → fixed → cleaned chain.
+func senderIssues(orig, fixed, cleaned *ach.File) []string {
+	var out []string
+	if fixed == nil {
+		return out
+	}
+	for bi, fb := range fixed.Batches {
+		id, name := fb.GetHeader().CompanyIdentification, fb.GetHeader().CompanyName
+		if orig != nil && bi < len(orig.Batches) {
+			oh := orig.Batches[bi].GetHeader()
+			if oh.CompanyIdentification != id || oh.CompanyName != name {
+				out = append(out, fmt.Sprintf("batch %d sender differs from original", bi+1))
+			}
+		}
+		if cleaned != nil && bi < len(cleaned.Batches) {
+			ch := cleaned.Batches[bi].GetHeader()
+			if ch.CompanyIdentification != id || ch.CompanyName != name {
+				out = append(out, fmt.Sprintf("batch %d sender differs from cleaned", bi+1))
+			}
 		}
 	}
 	return out

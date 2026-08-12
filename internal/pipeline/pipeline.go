@@ -51,10 +51,11 @@ const (
 	EvHoldApproved       = "hold_approved"
 	EvHoldDeclined       = "hold_declined"
 	EvSubmissionPruned   = "submission_pruned"
+	EvJobFailed          = "job_failed"
 )
 
-// emit records an event in the store and hands it to the notifier.
-func emit(ctx context.Context, d Deps, typ string, ref *uuid.UUID, payload json.RawMessage) error {
+// Emit records an event in the store and hands it to the notifier.
+func Emit(ctx context.Context, d Deps, typ string, ref *uuid.UUID, payload json.RawMessage) error {
 	if err := d.Store.AppendEvent(ctx, typ, ref, payload); err != nil {
 		return err
 	}

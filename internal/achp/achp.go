@@ -60,10 +60,10 @@ func rebuild(file *ach.File, transform func(*ach.EntryDetail) *ach.EntryDetail) 
 	out.SetValidation(file.GetValidation())
 
 	for _, batch := range file.Batches {
-		header := batch.GetHeader()
+		header := *batch.GetHeader()
 		header.BatchNumber = 0
 
-		fixed, err := ach.NewBatch(header)
+		fixed, err := ach.NewBatch(&header)
 		if err != nil {
 			return nil, fmt.Errorf("creating batch: %w", err)
 		}
@@ -227,6 +227,10 @@ func VerifySame(original, fixed *ach.File) error {
 	for bi, fb := range fixed.Batches {
 		ob := original.Batches[bi]
 		oe, fe := ob.GetEntries(), fb.GetEntries()
+		if ob.GetHeader().CompanyIdentification != fb.GetHeader().CompanyIdentification ||
+			ob.GetHeader().CompanyName != fb.GetHeader().CompanyName {
+			return fmt.Errorf("batch %d: sender differs from original", bi+1)
+		}
 		if len(fe) != len(oe) {
 			return fmt.Errorf("batch %d: fixed has %d entries, original has %d", bi+1, len(fe), len(oe))
 		}
@@ -311,28 +315,41 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy, releas
 	legs := 0
 	for _, header := range order {
 		g := groups[header]
-		bh := ach.NewBatchHeader()
-		bh.ServiceClassCode = g.header.ServiceClassCode
-		bh.CompanyName = g.header.CompanyName
-		bh.CompanyIdentification = g.header.CompanyIdentification
-		bh.StandardEntryClassCode = g.header.StandardEntryClassCode
-		bh.CompanyEntryDescription = "RELEASE"
-		bh.EffectiveEntryDate = releaseDate
+		// Preserve the original batch header; only the release's own
+		// characteristics change: the money originates from the holding
+		// account on the release date.
+		bh := *g.header
 		bh.ODFIIdentification = policy.HoldingRDFI[:8]
+		bh.EffectiveEntryDate = releaseDate
+		bh.BatchNumber = 0
 
-		batch, err := ach.NewBatch(bh)
+		batch, err := ach.NewBatch(&bh)
 		if err != nil {
 			return nil, 0, nil, fmt.Errorf("creating release batch: %w", err)
 		}
 		for _, hr := range g.legs {
-			e := ach.NewEntryDetail()
-			e.TransactionCode = hr.OrigTranCode
+			// Copy the original entry wholesale so the tax id/SSN, name, and
+			// discretionary data survive, and restore the real receiver
+			// regardless of any prior in-place redirect. Only the trace number
+			// and addenda are regenerated.
+			e := *hr.Entry
 			e.RDFIIdentification = hr.OrigRDFI
 			e.CheckDigit = hr.OrigCheck
 			e.DFIAccountNumber = hr.OrigAccount
 			e.IndividualName = hr.OrigName
 			e.Amount = hr.OrigAmount
-			batch.AddEntry(e)
+			e.TransactionCode = hr.OrigTranCode
+			e.TraceNumber = ""
+			// Releases are fresh credits: no addenda carry over.
+			e.Addenda02 = nil
+			e.Addenda05 = nil
+			e.Addenda98 = nil
+			e.Addenda98Refused = nil
+			e.Addenda99 = nil
+			e.Addenda99Contested = nil
+			e.Addenda99Dishonored = nil
+			e.AddendaRecordIndicator = 0
+			batch.AddEntry(&e)
 			ids = append(ids, hr.Hold.ID)
 			legs++
 		}
@@ -365,6 +382,10 @@ func VerifyConsistency(fixed, cleaned, release *ach.File, held []HeldEntry, poli
 	for bi, cb := range cleaned.Batches {
 		fb := fixed.Batches[bi]
 		fe, ce := fb.GetEntries(), cb.GetEntries()
+		if fb.GetHeader().CompanyIdentification != cb.GetHeader().CompanyIdentification ||
+			fb.GetHeader().CompanyName != cb.GetHeader().CompanyName {
+			return fmt.Errorf("batch %d: sender differs from fixed", bi+1)
+		}
 		if len(fe) != len(ce) {
 			return fmt.Errorf("batch %d: cleaned has %d entries, fixed has %d", bi+1, len(ce), len(fe))
 		}
@@ -400,28 +421,36 @@ func VerifyConsistency(fixed, cleaned, release *ach.File, held []HeldEntry, poli
 
 // VerifyRelease confirms a release file carries exactly the legs for the held
 // entries it was built from: one leg per pending/approved hold, each moving the
-// exact amount back to the original receiver account/RDFI, with totals equal.
+// exact amount back to the original receiver account/RDFI with its tax id/SSN
+// and a preserved batch header description, with totals equal.
 func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) error {
 	if release.Header.ImmediateOrigin != policy.HoldingRDFI {
 		return fmt.Errorf("release file origin %s != holding rdfi %s", release.Header.ImmediateOrigin, policy.HoldingRDFI)
 	}
 	expected := map[string]int{}
 	expTotal := 0
+	srcHeaders := map[string]bool{}
 	for _, hr := range held {
 		if hr.Hold.Status != domain.HoldPending && hr.Hold.Status != domain.HoldApproved {
 			continue
 		}
-		key := fmt.Sprintf("%d|%s|%s", hr.OrigAmount, hr.OrigRDFI+hr.OrigCheck, hr.OrigAccount)
+		key := fmt.Sprintf("%d|%s|%s|%s", hr.OrigAmount, hr.OrigRDFI+hr.OrigCheck, hr.OrigAccount, hr.Entry.IdentificationNumber)
 		expected[key]++
 		expTotal += hr.OrigAmount
+		if hr.Header != nil {
+			srcHeaders[releaseHeaderKey(hr.Header)] = true
+		}
 	}
 	relTotal := 0
 	for _, b := range release.Batches {
 		if b.GetHeader().ODFIIdentification != policy.HoldingRDFI[:8] {
 			return fmt.Errorf("release batch ODFI %s != holding rdfi %s", b.GetHeader().ODFIIdentification, policy.HoldingRDFI[:8])
 		}
+		if !srcHeaders[releaseHeaderKey(b.GetHeader())] {
+			return fmt.Errorf("release batch header does not match a source batch header")
+		}
 		for _, leg := range b.GetEntries() {
-			key := fmt.Sprintf("%d|%s|%s", leg.Amount, leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber)
+			key := fmt.Sprintf("%d|%s|%s|%s", leg.Amount, leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.IdentificationNumber)
 			if expected[key] == 0 {
 				return fmt.Errorf("release has an unexpected leg for %s", key)
 			}
@@ -438,6 +467,14 @@ func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) er
 		return fmt.Errorf("release total %d != held total %d", relTotal, expTotal)
 	}
 	return nil
+}
+
+// releaseHeaderKey fingerprints the batch fields a release must preserve from
+// its source header: the sender (customer id + company name) and the entry
+// description. ODFI and effective date are intentionally rewritten for the
+// release, so they are not part of the fingerprint.
+func releaseHeaderKey(h *ach.BatchHeader) string {
+	return h.CompanyIdentification + "|" + h.CompanyName + "|" + h.CompanyEntryDescription
 }
 
 func popHeld(m map[string][]HeldEntry, trace string, amount int, rdfi, account string) *HeldEntry {

@@ -1,5 +1,9 @@
 *.env
 *_files/
+.gitea/
+.dockerignore
+Dockerfile
+docker-compose.yml
 bin/
 .achfraudconfig.json
 ach-fraud

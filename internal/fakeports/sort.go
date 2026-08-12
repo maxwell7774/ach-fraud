@@ -43,6 +43,8 @@ func sortHoldsFor(rows []domain.Hold, col, dir string) {
 			less = a.EntryReceiverAcct < b.EntryReceiverAcct
 		case "rdfi":
 			less = a.EntryRdfi < b.EntryRdfi
+		case "customer":
+			less = a.CustomerID < b.CustomerID
 		case "status":
 			less = a.Status < b.Status
 		default:

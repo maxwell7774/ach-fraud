@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/27actions/ach/internal/domain"
@@ -42,9 +41,10 @@ type Config struct {
 
 	// Graph mail: app-only (client-credentials) emails from a shared mailbox,
 	// using the same Entra app registration as login (Mail.Send app permission).
+	// Recipients and their alert subscriptions live in the database, managed
+	// through the web UI, so no recipient list is configured here.
 	MailEnabled   bool   `json:"mail_enabled"`
 	SharedMailbox string `json:"shared_mailbox"`
-	AlertEmails   string `json:"alert_emails"`
 	AppBaseURL    string `json:"app_base_url"`
 }
 
@@ -70,23 +70,11 @@ func (c *Config) SessionTTL() time.Duration {
 
 // MailConfigured reports whether Graph mail alerts are configured and enabled.
 // It reuses the Entra app registration (tenant + client id/secret) for the
-// client-credentials flow, so only the mailbox and recipients need separate
-// settings.
+// client-credentials flow; the recipients themselves live in the database.
 func (c *Config) MailConfigured() bool {
 	return c.MailEnabled &&
 		c.EntraTenantID != "" && c.EntraClientID != "" && c.EntraClientSecret != "" &&
-		c.SharedMailbox != "" && c.AlertEmails != ""
-}
-
-// AlertEmailsList splits the comma-separated recipient list.
-func (c *Config) AlertEmailsList() []string {
-	var out []string
-	for _, e := range strings.Split(c.AlertEmails, ",") {
-		if e = strings.TrimSpace(e); e != "" {
-			out = append(out, e)
-		}
-	}
-	return out
+		c.SharedMailbox != ""
 }
 
 // Policy returns the hold rules as domain policy, applying the config

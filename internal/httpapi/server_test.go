@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/27actions/ach/internal/achp"
 	"github.com/27actions/ach/internal/auth"
 	"github.com/27actions/ach/internal/checksum"
 	"github.com/27actions/ach/internal/domain"
@@ -19,6 +20,7 @@ import (
 	"github.com/27actions/ach/internal/testutil"
 
 	"github.com/google/uuid"
+	"github.com/moov-io/ach"
 )
 
 func testServer(t *testing.T) (*Server, *fakeports.Store) {
@@ -94,6 +96,245 @@ func TestDashboard(t *testing.T) {
 	}
 	if d.HoldCounts["pending"] != 1 || len(d.Pending) != 1 {
 		t.Fatalf("unexpected dashboard: %+v", d)
+	}
+}
+
+func TestDashboardCountsWindowed(t *testing.T) {
+	s, st := testServer(t)
+	fixed := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	st.Now = func() time.Time { return fixed }
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "w.ach", Status: domain.SubmissionReady, ReceivedAt: fixed})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	if err != nil {
+		t.Fatalf("hdr: %v", err)
+	}
+	mkEntry := func(trace string) uuid.UUID {
+		en, err := st.CreateBatchEntry(ctx, domain.BatchEntry{
+			HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "100000001",
+			Amount: 200000, TranCode: 22, Trace: trace,
+		})
+		if err != nil {
+			t.Fatalf("entry: %v", err)
+		}
+		return en.ID
+	}
+	hold := func(entry uuid.UUID, status domain.HoldStatus) uuid.UUID {
+		h, err := st.CreateHold(ctx, entry, status, "")
+		if err != nil {
+			t.Fatalf("hold: %v", err)
+		}
+		return h.ID
+	}
+
+	// Pending (always counted) and decisions made at `fixed` (inside the
+	// 7-day window).
+	hold(mkEntry("p1"), domain.HoldPending)
+	recentApproved := hold(mkEntry("a1"), domain.HoldPending)
+	if err := st.SetHoldStatus(ctx, recentApproved, domain.HoldApproved); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	recentDeclined := hold(mkEntry("d1"), domain.HoldPending)
+	if err := st.SetHoldStatus(ctx, recentDeclined, domain.HoldDeclined); err != nil {
+		t.Fatalf("decline: %v", err)
+	}
+
+	// Decisions made 8 days before `fixed`, outside the 7-day window.
+	st.Now = func() time.Time { return fixed.Add(-8 * 24 * time.Hour) }
+	oldApproved := hold(mkEntry("a2"), domain.HoldPending)
+	if err := st.SetHoldStatus(ctx, oldApproved, domain.HoldApproved); err != nil {
+		t.Fatalf("approve old: %v", err)
+	}
+	hold(mkEntry("e1"), domain.HoldAutoDeclined)
+
+	rr := get(t, s, "/api/dashboard")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var d dashboard
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.HoldCounts["pending"] != 1 {
+		t.Fatalf("pending = %d, want 1", d.HoldCounts["pending"])
+	}
+	if d.HoldCounts["approved"] != 1 {
+		t.Fatalf("approved = %d, want 1", d.HoldCounts["approved"])
+	}
+	if d.HoldCounts["declined"] != 1 {
+		t.Fatalf("declined = %d, want 1", d.HoldCounts["declined"])
+	}
+	if d.HoldCounts["auto_declined"] != 0 {
+		t.Fatalf("auto_declined = %d, want 0", d.HoldCounts["auto_declined"])
+	}
+}
+
+func TestListHoldsSortByCustomer(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "s.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	mk := func(customer, account, trace string) {
+		hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: customer})
+		if err != nil {
+			t.Fatalf("hdr: %v", err)
+		}
+		en, err := st.CreateBatchEntry(ctx, domain.BatchEntry{
+			HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: account,
+			Amount: 200000, TranCode: 22, Trace: trace,
+		})
+		if err != nil {
+			t.Fatalf("entry: %v", err)
+		}
+		if _, err := st.CreateHold(ctx, en.ID, domain.HoldPending, ""); err != nil {
+			t.Fatalf("hold: %v", err)
+		}
+	}
+	mk("zeta", "100000002", "t2")
+	mk("alpha", "100000001", "t1")
+
+	var page holdsPage
+	rr := get(t, s, "/api/holds?sort=customer&dir=asc")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Holds) != 2 {
+		t.Fatalf("holds = %d, want 2", len(page.Holds))
+	}
+	if page.Holds[0].CustomerID != "alpha" || page.Holds[1].CustomerID != "zeta" {
+		t.Fatalf("customer order = %q, %q; want alpha, zeta", page.Holds[0].CustomerID, page.Holds[1].CustomerID)
+	}
+}
+
+func TestRecipientsCRUD(t *testing.T) {
+	s, _ := testServer(t)
+
+	var rec domain.Recipient
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("POST", "/api/recipients",
+		strings.NewReader(`{"email":"ops@corp.com","name":"Ops","enabled":true,"alert_types":["pending_holds","failed"]}`)))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &rec); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if rec.Email != "ops@corp.com" || len(rec.AlertTypes) != 2 {
+		t.Fatalf("created = %+v", rec)
+	}
+
+	var page struct {
+		Recipients []domain.Recipient `json:"recipients"`
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/recipients", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Recipients) != 1 {
+		t.Fatalf("recipients = %d, want 1", len(page.Recipients))
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("PUT", "/api/recipients/"+rec.ID.String(),
+		strings.NewReader(`{"email":"ops@corp.com","name":"Ops2","enabled":false,"alert_types":["velocity_leaks"]}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update = %d %s", rr.Code, rr.Body.String())
+	}
+	var up domain.Recipient
+	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if up.Name != "Ops2" || up.Enabled || len(up.AlertTypes) != 1 || up.AlertTypes[0] != "velocity_leaks" {
+		t.Fatalf("updated = %+v", up)
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("DELETE", "/api/recipients/"+rec.ID.String(), nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete = %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/recipients", nil))
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Recipients) != 0 {
+		t.Fatalf("recipients after delete = %d, want 0", len(page.Recipients))
+	}
+}
+
+func TestRecipientsRejectsUnknownAlertType(t *testing.T) {
+	s, _ := testServer(t)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("POST", "/api/recipients",
+		strings.NewReader(`{"email":"ops@corp.com","alert_types":["bogus"]}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("create = %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestVelocityLeakScopedToLiveGroup(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	eff := time.Date(2026, 1, 14, 0, 0, 0, 0, time.UTC)
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "leak.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1", EffectiveDate: &eff})
+	if err != nil {
+		t.Fatalf("hdr: %v", err)
+	}
+	en, err := st.CreateBatchEntry(ctx, domain.BatchEntry{
+		HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "100000001",
+		Amount: 60000, TranCode: 22, Trace: "t1",
+	})
+	if err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+	hold, err := st.CreateHold(ctx, en.ID, domain.HoldPending, "")
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	payload := []byte(`{"account":"100000001","rdfi":"231380104","effective_date":"2026-01-14","customer_id":"c1","total":120000,"prior":60000,"held":60000}`)
+	if err := st.AppendEvent(ctx, "velocity_crossed", &sub.ID, payload); err != nil {
+		t.Fatalf("event: %v", err)
+	}
+
+	var d dashboard
+	rr := get(t, s, "/api/dashboard")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(d.VelocityLeaks) != 1 || d.VelocityLeaks[0].Prior != 60000 || d.VelocityLeaks[0].Filename != "leak.ach" {
+		t.Fatalf("leaks = %+v, want one live leak", d.VelocityLeaks)
+	}
+
+	// Decide the group's hold: the leak is no longer live and drops off.
+	if err := st.SetHoldStatus(ctx, hold.ID, domain.HoldApproved); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	rr = get(t, s, "/api/dashboard")
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(d.VelocityLeaks) != 0 {
+		t.Fatalf("leaks still shown after group decided: %+v", d.VelocityLeaks)
 	}
 }
 
@@ -431,19 +672,49 @@ func TestAuthorizationMatrix(t *testing.T) {
 		t.Fatalf("processor submissions = %d, want 403", rr.Code)
 	}
 
-	// Admins do everything.
+	// Admins see files/entries/headers and review holds, but not events or
+	// email-recipient management (super-admin only).
 	adminHold := seedHold(t, st)
 	rr = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+adminHold.String()+"/decline", strings.NewReader(`{}`)), admin))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin decline = %d, want 200", rr.Code)
 	}
-	for _, p := range []string{"/api/submissions", "/api/entries", "/api/headers", "/api/events"} {
+	for _, p := range []string{"/api/submissions", "/api/entries", "/api/headers"} {
 		rr := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), admin))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("admin %s = %d, want 200", p, rr.Code)
 		}
+	}
+	for _, p := range []string{"/api/events", "/api/recipients"} {
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), admin))
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("admin %s = %d, want 403", p, rr.Code)
+		}
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/recipients",
+		strings.NewReader(`{"email":"a@b.c","alert_types":["pending_holds"]}`)), admin))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("admin create recipient = %d, want 403", rr.Code)
+	}
+
+	// Super admins do everything, including events and recipients.
+	superAdmin := loginAs(t, s, fe, []string{"ACH.SuperAdmin"})
+	for _, p := range []string{"/api/dashboard", "/api/holds", "/api/submissions", "/api/entries", "/api/headers", "/api/events", "/api/recipients"} {
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), superAdmin))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("super admin %s = %d, want 200", p, rr.Code)
+		}
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/recipients",
+		strings.NewReader(`{"email":"a@b.c","alert_types":["pending_holds"]}`)), superAdmin))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("super admin create recipient = %d, want 201", rr.Code)
 	}
 }
 
@@ -589,6 +860,117 @@ func TestVerifyPaginatesEntries(t *testing.T) {
 	}
 	if len(v.Entries) != 25 {
 		t.Fatalf("page 2 entries = %d, want 25", len(v.Entries))
+	}
+}
+
+func TestSubmissionDetailIncludesVerification(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "v.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	if err := st.UpsertVerification(ctx, sub.ID, true, ""); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	var d submissionDetail
+	rr := get(t, s, "/api/submissions/"+sub.ID.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detail = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.Verification == nil || !d.Verification.Verified {
+		t.Fatalf("verification = %+v, want verified", d.Verification)
+	}
+}
+
+func TestVerifyIncludesSenderAndRelease(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "v.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	data, err := testutil.CreditFile([]testutil.Entry{
+		{Account: "111111", Name: "Jane", Identification: "123456789", Amount: 200000, RDFI: "231380104", Trace: 1},
+		{Account: "222222", Name: "B", Amount: 5000, RDFI: "231380104", Trace: 2},
+	}, "260115")
+	if err != nil {
+		t.Fatalf("credit file: %v", err)
+	}
+	fixed, err := achp.Read(data, true)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	trace0 := fixed.Batches[0].GetEntries()[0].TraceNumberField()
+	held, err := achp.MatchHolds(fixed, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: trace0, EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldApproved},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	cleaned, err := achp.BuildCleaned(fixed, held, s.deps.Policy)
+	if err != nil {
+		t.Fatalf("cleaned: %v", err)
+	}
+	release, legs, _, err := achp.BuildRelease(fixed, held, s.deps.Policy, "260116")
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if legs != 1 {
+		t.Fatalf("legs = %d, want 1", legs)
+	}
+	for kind, f := range map[domain.ArtifactKind]*ach.File{
+		domain.ArtifactOriginal: fixed,
+		domain.ArtifactFixed:    fixed,
+		domain.ArtifactCleaned:  cleaned,
+		domain.ArtifactRelease:  release,
+	} {
+		bytes, err := achp.Write(f)
+		if err != nil {
+			t.Fatalf("write %s: %v", kind, err)
+		}
+		sum := checksum.Bytes(bytes)
+		if _, err := st.CreateArtifact(ctx, domain.Artifact{SubmissionID: sub.ID, Kind: kind, Checksum: sum, State: domain.ArtifactPublished}); err != nil {
+			t.Fatalf("artifact %s: %v", kind, err)
+		}
+		if err := s.deps.Files.Put(ctx, sum, bytes); err != nil {
+			t.Fatalf("put %s: %v", kind, err)
+		}
+	}
+
+	var v submissionVerify
+	rr := get(t, s, "/api/submissions/"+sub.ID.String()+"/verify")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("verify = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !v.Verified {
+		t.Fatalf("verified = false, issues: %v", v.Issues)
+	}
+	if len(v.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(v.Entries))
+	}
+	heldRow, freeRow := v.Entries[0], v.Entries[1]
+	if heldRow.Sender != "12104288" || heldRow.SenderName != "Acme Corp" {
+		t.Fatalf("sender = %q/%q, want 12104288/Acme Corp", heldRow.Sender, heldRow.SenderName)
+	}
+	if heldRow.OriginalAcct != "111111" || heldRow.FixedAcct != "111111" {
+		t.Fatalf("held row accounts wrong: %+v", heldRow)
+	}
+	if heldRow.CleanedAcct != "555555" {
+		t.Fatalf("cleaned acct = %q, want holding account 555555", heldRow.CleanedAcct)
+	}
+	if heldRow.ReleaseAcct != "111111" {
+		t.Fatalf("release acct = %q, want 111111", heldRow.ReleaseAcct)
+	}
+	if freeRow.CleanedAcct != "222222" || freeRow.ReleaseAcct != "" {
+		t.Fatalf("free row accounts wrong: %+v", freeRow)
 	}
 }
 

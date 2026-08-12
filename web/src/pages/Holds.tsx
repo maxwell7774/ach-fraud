@@ -185,7 +185,7 @@ export default function Holds() {
               }}
             >
               {s === "" ? "All" : human(s)}
-              <Show when={tabCount(s) > 0}>
+              <Show when={s === "pending" && tabCount(s) > 0}>
                 <span class="tab-count">{tabCount(s)}</span>
               </Show>
             </a>
@@ -213,7 +213,7 @@ export default function Holds() {
             To <DatePicker value={endDate()} onChange={setEndDate} />
           </label>
           <button class="btn btn-outline" type="submit">
-            Filter
+            Search
           </button>
         </form>
       </div>
@@ -270,29 +270,25 @@ export default function Holds() {
                     />
                   </th>
                 </Show>
-                <SortableTh col="filename" sort={sort()} dir={dir()} onSort={onSort}>
-                  File
-                </SortableTh>
-                <SortableTh col="effective" sort={sort()} dir={dir()} onSort={onSort}>
-                  Effective
-                </SortableTh>
-                <SortableTh col="receiver" sort={sort()} dir={dir()} onSort={onSort}>
-                  Receiver
-                </SortableTh>
                 <SortableTh col="account" sort={sort()} dir={dir()} onSort={onSort}>
                   Account
                 </SortableTh>
                 <SortableTh col="amount" sort={sort()} dir={dir()} onSort={onSort}>
                   Amount
                 </SortableTh>
+                <SortableTh col="effective" sort={sort()} dir={dir()} onSort={onSort}>
+                  Effective
+                </SortableTh>
                 <SortableTh col="rdfi" sort={sort()} dir={dir()} onSort={onSort}>
                   RDFI
+                </SortableTh>
+                <SortableTh col="customer" sort={sort()} dir={dir()} onSort={onSort}>
+                  Customer
                 </SortableTh>
                 <SortableTh col="status" sort={sort()} dir={dir()} onSort={onSort}>
                   Status
                 </SortableTh>
                 <th>Why held</th>
-                <th>Group</th>
                 <Show when={canReview()}>
                   <th>Actions</th>
                 </Show>
@@ -312,35 +308,38 @@ export default function Holds() {
                         />
                       </td>
                     </Show>
-                    <td data-label="File" class="muted">
-                      {h.filename}
-                    </td>
-                    <td data-label="Effective">{fmtDate(h.effective_date)}</td>
-                    <td data-label="Receiver">{h.entry_receiver_name}</td>
                     <td data-label="Account">
                       <A href={`/holds/${h.id}`} class="file-link">
                         {h.entry_receiver_account}
                       </A>
-                    </td>
-                    <td data-label="Amount" class="amount">
-                      {dollars(h.entry_amount)}
-                    </td>
-                    <td data-label="RDFI">{h.entry_rdfi}</td>
-                    <td data-label="Status">
-                      <Badge status={h.status} />
-                    </td>
-                    <td data-label="Why held" class="muted">
-                      {h.reason || "—"}
-                    </td>
-                    <td data-label="Group">
+                      <Show when={h.entry_receiver_name}>
+                        <span class="cell-sub">{h.entry_receiver_name}</span>
+                      </Show>
                       <Show when={groupCounts().get(groupKey(h))! > 1}>
                         <span
-                          class="badge group-badge"
+                          class="badge badge-group"
                           title="Same-day velocity group: these hold together, and are released together once approved"
                         >
                           {groupCounts().get(groupKey(h))} in group
                         </span>
                       </Show>
+                    </td>
+                    <td data-label="Amount" class="amount">
+                      {dollars(h.entry_amount)}
+                    </td>
+                    <td data-label="Effective">{fmtDate(h.effective_date)}</td>
+                    <td data-label="RDFI">{h.entry_rdfi}</td>
+                    <td data-label="Customer">
+                      <span class="muted truncate">{h.customer_id || "—"}</span>
+                      <Show when={h.company_name}>
+                        <span class="cell-sub">{h.company_name}</span>
+                      </Show>
+                    </td>
+                    <td data-label="Status">
+                      <Badge status={h.status} />
+                    </td>
+                    <td data-label="Why held" class="muted truncate" title={h.reason || ""}>
+                      {h.reason || "—"}
                     </td>
                     <Show when={canReview()}>
                       <td data-label="Actions">

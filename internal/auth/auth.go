@@ -46,20 +46,23 @@ type Identity struct {
 // Entra app-role values. Users are assigned these in the Entra app
 // registration; the id_token carries them in the "roles" claim.
 const (
-	entraRoleAdmin     = "ACH.Admin"
-	entraRoleProcessor = "ACH.Processor"
-	entraRoleWatcher   = "ACH.Watcher"
+	entraRoleSuperAdmin = "ACH.SuperAdmin"
+	entraRoleAdmin      = "ACH.Admin"
+	entraRoleProcessor  = "ACH.Processor"
+	entraRoleWatcher    = "ACH.Watcher"
 )
 
 // MapRole maps Entra app-role claim values to the canonical domain role,
-// honoring Admin > Processor > Watcher precedence. It returns "" when no
-// recognized role is present.
+// honoring SuperAdmin > Admin > Processor > Watcher precedence. It returns ""
+// when no recognized role is present.
 func MapRole(claims []string) string {
 	role := ""
 	for _, c := range claims {
 		switch {
+		case matchesRole(c, entraRoleSuperAdmin):
+			return domain.RoleSuperAdmin
 		case matchesRole(c, entraRoleAdmin):
-			return domain.RoleAdmin
+			role = domain.RoleAdmin
 		case matchesRole(c, entraRoleProcessor):
 			if role != domain.RoleAdmin {
 				role = domain.RoleProcessor

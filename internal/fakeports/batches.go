@@ -119,6 +119,76 @@ func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID 
 	return out, nil
 }
 
+func (s *Store) SumHeldByGroup(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Restrict to the velocity groups present in the submission being screened.
+	targets := map[string]bool{}
+	for _, e := range s.entries {
+		hdr := s.headers[e.HeaderID]
+		if hdr.SubmissionID != submissionID {
+			continue
+		}
+		if e.TranCode != 22 && e.TranCode != 32 {
+			continue
+		}
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+			continue
+		}
+		targets[velocityKeyFor(e.ReceiverAccount, e.Rdfi, hdr.CustomerID, hdr.EffectiveDate)] = true
+	}
+
+	sums := map[string]*domain.VelocitySum{}
+	order := []string{}
+	for _, h := range s.holds {
+		en, ok := s.entries[h.EntryID]
+		if !ok {
+			continue
+		}
+		hdr := s.headers[en.HeaderID]
+		sub := s.subs[hdr.SubmissionID]
+		// Held amounts from earlier files only; the current file's own portion
+		// is being held now and must not count as already shipped.
+		if sub.ID == submissionID {
+			continue
+		}
+		if sub.Status != domain.SubmissionReady && sub.Status != domain.SubmissionArchived {
+			continue
+		}
+		if j, ok := s.jobs[jobKey(domain.JobProcess, sub.ID)]; ok && j.State == domain.JobFailed {
+			continue
+		}
+		if en.TranCode != 22 && en.TranCode != 32 {
+			continue
+		}
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+			continue
+		}
+		key := velocityKeyFor(en.ReceiverAccount, en.Rdfi, hdr.CustomerID, hdr.EffectiveDate)
+		if !targets[key] {
+			continue
+		}
+		vs, ok := sums[key]
+		if !ok {
+			vs = &domain.VelocitySum{
+				ReceiverAccount: en.ReceiverAccount,
+				Rdfi:            en.Rdfi,
+				EffectiveDate:   hdr.EffectiveDate,
+				CustomerID:      hdr.CustomerID,
+			}
+			sums[key] = vs
+			order = append(order, key)
+		}
+		vs.Total += en.Amount
+	}
+	out := make([]domain.VelocitySum, 0, len(order))
+	for _, k := range order {
+		out = append(out, *sums[k])
+	}
+	return out, nil
+}
+
 func velocityKeyFor(account, rdfi, customer string, eff *time.Time) string {
 	day := ""
 	if eff != nil {

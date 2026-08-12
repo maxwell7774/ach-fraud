@@ -68,7 +68,7 @@ func Ingest(ctx context.Context, d Deps, in ports.Input) (*IngestResult, error) 
 
 		if duplicate {
 			res.Skipped++
-			if err := emit(ctx, d, EvDedupSkipped, nil, nil); err != nil {
+			if err := Emit(ctx, d, EvDedupSkipped, nil, nil); err != nil {
 				return nil, err
 			}
 			if err := in.Remove(ctx, f.Filename); err != nil {
@@ -77,7 +77,7 @@ func Ingest(ctx context.Context, d Deps, in ports.Input) (*IngestResult, error) 
 			continue
 		}
 
-		if err := emit(ctx, d, EvSubmissionCreated, &sub.ID, nil); err != nil {
+		if err := Emit(ctx, d, EvSubmissionCreated, &sub.ID, nil); err != nil {
 			return nil, err
 		}
 		res.Ingested++

@@ -24,6 +24,7 @@ func (s *Store) populateHold(h domain.Hold) domain.Hold {
 		h.EffectiveDate = hdr.EffectiveDate
 		h.SubmissionID = hdr.SubmissionID
 		h.CustomerID = hdr.CustomerID
+		h.CompanyName = hdr.CompanyName
 		if sub, ok := s.subs[hdr.SubmissionID]; ok {
 			h.Filename = sub.Filename
 		}
@@ -46,6 +47,7 @@ func (s *Store) CreateHold(ctx context.Context, entryID uuid.UUID, status domain
 	}
 	h := domain.Hold{ID: uuid.New(), EntryID: entryID, Status: status, Reason: reason}
 	s.holds[h.ID] = h
+	s.holdUpd[h.ID] = s.Now()
 	return h, nil
 }
 
@@ -150,11 +152,19 @@ func (s *Store) CountHoldsFiltered(ctx context.Context, status, search string, s
 	return int64(len(rows)), nil
 }
 
-func (s *Store) CountHoldsByStatus(ctx context.Context) (map[string]int64, error) {
+func (s *Store) CountHoldsByStatus(ctx context.Context, cutoff time.Time) (map[string]int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := map[string]int64{}
 	for _, h := range s.holds {
+		// Open pending holds always count (the live review queue); resolved
+		// statuses count only when decided since the cutoff.
+		if h.Status != domain.HoldPending {
+			upd, ok := s.holdUpd[h.ID]
+			if !ok || upd.Before(cutoff) {
+				continue
+			}
+		}
 		out[string(h.Status)]++
 	}
 	return out, nil
@@ -220,6 +230,7 @@ func (s *Store) SetHoldStatus(ctx context.Context, id uuid.UUID, status domain.H
 	}
 	h.Status = status
 	s.holds[id] = h
+	s.holdUpd[id] = s.Now()
 	return nil
 }
 

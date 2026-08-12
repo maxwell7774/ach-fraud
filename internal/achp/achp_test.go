@@ -1,6 +1,7 @@
 package achp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/27actions/ach/internal/domain"
@@ -124,6 +125,73 @@ func TestMatchHoldsAndCleaned(t *testing.T) {
 	}
 }
 
+// TestBuildReleasePreservesEntryAndHeader: the release leg keeps the original
+// entry's tax id/SSN, name, and discretionary data, and the batch header keeps
+// the original description; only the ODFI (holding account) and effective date
+// differ from the source file.
+func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "Jane Doe", Identification: "123456789", Amount: 200000, RDFI: "231380104", Trace: 1},
+		{Account: "222222", Name: "B", Amount: 5000, RDFI: "231380104", Trace: 2},
+	})
+	f := read(t, data)
+	trace0 := f.Batches[0].GetEntries()[0].TraceNumberField()
+	held, err := MatchHolds(f, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: trace0, EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldPending},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+
+	release, legs, _, err := BuildRelease(f, held, policy, "260101")
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if release == nil || legs != 1 {
+		t.Fatalf("expected 1 release leg, got %d", legs)
+	}
+
+	src := f.Batches[0].GetHeader()
+	rh := release.Batches[0].GetHeader()
+	if rh.CompanyEntryDescription != src.CompanyEntryDescription {
+		t.Fatalf("description = %q, want %q", rh.CompanyEntryDescription, src.CompanyEntryDescription)
+	}
+	if rh.CompanyName != src.CompanyName || rh.CompanyIdentification != src.CompanyIdentification ||
+		rh.StandardEntryClassCode != src.StandardEntryClassCode {
+		t.Fatalf("batch header fields not preserved: %+v", rh)
+	}
+	if rh.ODFIIdentification != policy.HoldingRDFI[:8] {
+		t.Fatalf("ODFI = %s, want holding rdfi", rh.ODFIIdentification)
+	}
+	if rh.EffectiveEntryDate != "260101" {
+		t.Fatalf("effective date = %q, want release date", rh.EffectiveEntryDate)
+	}
+
+	leg := release.Batches[0].GetEntries()[0]
+	if strings.TrimSpace(leg.IdentificationNumber) != "123456789" {
+		t.Fatalf("tax id = %q, want 123456789", leg.IdentificationNumber)
+	}
+	if strings.TrimSpace(leg.IndividualName) != "Jane Doe" {
+		t.Fatalf("name = %q, want Jane Doe", leg.IndividualName)
+	}
+	if leg.RDFIIdentification+leg.CheckDigit != "231380104" || leg.DFIAccountNumber != "111111" || leg.Amount != 200000 {
+		t.Fatalf("release leg wrong: %s %s %d", leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.Amount)
+	}
+
+	if err := VerifyRelease(release, held, policy); err != nil {
+		t.Fatalf("verify release: %v", err)
+	}
+
+	// Mirror the pipeline's write + re-read round trip.
+	relData, err := Write(release)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := VerifyRelease(read(t, relData), held, policy); err != nil {
+		t.Fatalf("verify release after round trip: %v", err)
+	}
+}
+
 // TestBuildCleanedLeavesInputUntouched: BuildCleaned must not mutate the fixed
 // file, so VerifyConsistency can genuinely verify the redirect to the holding
 // account rather than comparing two identically-mutated files.
@@ -188,6 +256,66 @@ func TestVerifyConsistencyDetectsMismatch(t *testing.T) {
 	wrongRelease.Batches[0].GetEntries()[0].DFIAccountNumber = "999999"
 	if err := VerifyConsistency(f, cleaned, wrongRelease, held, policy); err == nil {
 		t.Fatal("expected mismatch to fail consistency")
+	}
+}
+
+func TestVerifySameDetectsSenderMismatch(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "A", Amount: 200000, RDFI: "231380104", Trace: 1},
+	})
+	f := read(t, data)
+	fixed := read(t, data)
+	fixed.Batches[0].GetHeader().CompanyIdentification = "other-sender"
+	if err := VerifySame(f, fixed); err == nil || !strings.Contains(err.Error(), "sender") {
+		t.Fatalf("expected sender mismatch, got %v", err)
+	}
+}
+
+func TestVerifyConsistencyDetectsSenderMismatch(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "A", Amount: 200000, RDFI: "231380104", Trace: 1},
+		{Account: "222222", Name: "B", Amount: 5000, RDFI: "231380104", Trace: 2},
+	})
+	f := read(t, data)
+	trace0 := f.Batches[0].GetEntries()[0].TraceNumberField()
+	held, err := MatchHolds(f, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: trace0, EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldPending},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	cleaned, err := BuildCleaned(f, held, policy)
+	if err != nil {
+		t.Fatalf("cleaned: %v", err)
+	}
+	cleaned.Batches[0].GetHeader().CompanyName = "wrong-company"
+	if err := VerifyConsistency(f, cleaned, nil, held, policy); err == nil || !strings.Contains(err.Error(), "sender") {
+		t.Fatalf("expected sender mismatch, got %v", err)
+	}
+}
+
+func TestVerifyReleaseRejectsWrongSender(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "A", Amount: 200000, RDFI: "231380104", Trace: 1},
+	})
+	f := read(t, data)
+	trace0 := f.Batches[0].GetEntries()[0].TraceNumberField()
+	held, err := MatchHolds(f, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: trace0, EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldPending},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	release, legs, _, err := BuildRelease(f, held, policy, "260101")
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if release == nil || legs != 1 {
+		t.Fatalf("expected 1 leg, got %d", legs)
+	}
+	release.Batches[0].GetHeader().CompanyIdentification = "wrong-sender"
+	if err := VerifyRelease(release, held, policy); err == nil || !strings.Contains(err.Error(), "source batch") {
+		t.Fatalf("expected source-header mismatch, got %v", err)
 	}
 }
 

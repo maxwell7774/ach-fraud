@@ -80,7 +80,7 @@ func decide(ctx context.Context, d Deps, holdID uuid.UUID, actor, note string, d
 		return err
 	}
 	for _, id := range decided {
-		if err := emit(ctx, d, ev, &id, nil); err != nil {
+		if err := Emit(ctx, d, ev, &id, nil); err != nil {
 			return err
 		}
 	}

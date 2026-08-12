@@ -11,9 +11,10 @@ import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
 import Headers from "./pages/Headers";
 import Events from "./pages/Events";
+import Recipients from "./pages/Recipients";
 import { Loading } from "./components";
 import { MenuIcon, XIcon } from "./icons";
-import { setAuthDisabled, setCurrentUser, currentUser, isAdmin } from "./user";
+import { setAuthDisabled, setCurrentUser, currentUser, isAdmin, isSuperAdmin } from "./user";
 import { api } from "./api";
 import { logoutAction } from "./queries";
 
@@ -34,16 +35,26 @@ const LINKS = [
   { href: "/submissions", label: "Files", admin: true },
   { href: "/entries", label: "Entries", admin: true },
   { href: "/headers", label: "Headers", admin: true },
-  { href: "/events", label: "Events", admin: true },
+  { href: "/events", label: "Events", superAdmin: true },
+  { href: "/recipients", label: "Recipients", superAdmin: true },
 ];
 
 function Layout(props: { children?: any }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const close = () => setMenuOpen(false);
-  const visibleLinks = () => LINKS.filter((l) => !l.admin || isAdmin());
+  const visibleLinks = () =>
+    LINKS.filter((l) => (!l.admin || isAdmin()) && (!l.superAdmin || isSuperAdmin()));
   const user = currentUser;
   const roleLabel = (r?: string) =>
-    r === "admin" ? "Admin" : r === "processor" ? "Processor" : r === "watcher" ? "Watcher" : "";
+    r === "super_admin"
+      ? "Super admin"
+      : r === "admin"
+        ? "Admin"
+        : r === "processor"
+          ? "Processor"
+          : r === "watcher"
+            ? "Watcher"
+            : "";
   const logout = useAction(logoutAction);
   async function signOut() {
     try {
@@ -193,6 +204,7 @@ export default function App() {
             <Route path="/entries" component={Entries} />
             <Route path="/headers" component={Headers} />
             <Route path="/events" component={Events} />
+            <Route path="/recipients" component={Recipients} />
             <Route path="*404" component={() => <p>Not found</p>} />
           </Router>
           </ErrorBoundary>

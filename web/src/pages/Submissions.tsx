@@ -87,7 +87,7 @@ export default function Submissions() {
             To <DatePicker value={endDate()} onChange={setEndDate} />
           </label>
           <button class="btn btn-outline" type="submit">
-            Filter
+            Search
           </button>
         </form>
       </div>

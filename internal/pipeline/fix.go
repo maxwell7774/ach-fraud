@@ -37,7 +37,7 @@ func FixSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) error {
 		if serr := d.Store.SetSubmissionStatus(ctx, submissionID, domain.SubmissionFailed, err.Error()); serr != nil {
 			return serr
 		}
-		if eerr := emit(ctx, d, EvSubmissionFailed, &submissionID, nil); eerr != nil {
+		if eerr := Emit(ctx, d, EvSubmissionFailed, &submissionID, nil); eerr != nil {
 			return eerr
 		}
 		return err

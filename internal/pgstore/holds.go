@@ -32,7 +32,7 @@ func (s *Store) ListHoldsBySubmission(ctx context.Context, submissionID uuid.UUI
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
 	}
 	return out, nil
 }
@@ -47,7 +47,7 @@ func (s *Store) ListHoldsByReleaseArtifact(ctx context.Context, artifactID uuid.
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
 	}
 	return out, nil
 }
@@ -62,7 +62,7 @@ func (s *Store) ListAllHolds(ctx context.Context) ([]domain.Hold, error) {
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
 	}
 	return out, nil
 }
@@ -75,7 +75,7 @@ func (s *Store) GetHold(ctx context.Context, id uuid.UUID) (domain.Hold, error) 
 	return toDomainHoldDetail(
 		row.ID, row.EntryID, row.ReleaseArtifactID, row.Status, row.Reason,
 		row.EntryTrace, row.EntryRdfi, row.EntryReceiverName, row.EntryReceiverAccount,
-		row.EntryAmount, row.EntryTranCode, row.EffectiveDate, row.SubmissionID, row.CustomerID, row.Filename,
+		row.EntryAmount, row.EntryTranCode, row.EffectiveDate, row.SubmissionID, row.CustomerID, row.CompanyName, row.Filename,
 		row.CreatedAt.Time,
 	), nil
 }
@@ -90,15 +90,15 @@ func (s *Store) ListHoldsByStatus(ctx context.Context, status string, limit int)
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.Filename,
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename,
 			r.CreatedAt.Time,
 		))
 	}
 	return out, nil
 }
 
-func (s *Store) CountHoldsByStatus(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.q.CountHoldsByStatus(ctx)
+func (s *Store) CountHoldsByStatus(ctx context.Context, cutoff time.Time) (map[string]int64, error) {
+	rows, err := s.q.CountHoldsByStatus(ctx, toPgTime(cutoff))
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, st
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.Filename,
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename,
 			r.CreatedAt.Time,
 		))
 	}
@@ -214,7 +214,7 @@ func toDomainHold(h Hold) domain.Hold {
 
 func toDomainHoldDetail(
 	id, entryID, release pgtype.UUID, status, reason, trace, rdfi, name, acct string,
-	amount int64, tran int32, eff pgtype.Date, submissionID pgtype.UUID, customer, filename string,
+	amount int64, tran int32, eff pgtype.Date, submissionID pgtype.UUID, customer, company, filename string,
 	created time.Time,
 ) domain.Hold {
 	h := toDomainHold(Hold{
@@ -226,6 +226,7 @@ func toDomainHoldDetail(
 	})
 	h.SubmissionID = toUUID(submissionID)
 	h.CustomerID = customer
+	h.CompanyName = company
 	h.Filename = filename
 	h.EntryTrace = trace
 	h.EntryRdfi = rdfi

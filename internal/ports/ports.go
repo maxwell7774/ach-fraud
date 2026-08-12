@@ -46,6 +46,7 @@ type Store interface {
 	ListEntriesBySubmission(ctx context.Context, submissionID uuid.UUID) ([]domain.BatchEntry, error)
 	HasEntryByRdfiAccount(ctx context.Context, rdfi, account string) (bool, error)
 	SumVelocity(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error)
+	SumHeldByGroup(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error)
 	ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error)
 	CountEntriesFiltered(ctx context.Context, search string, start, end *time.Time) (int64, error)
 	ListHeadersFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchHeader, error)
@@ -59,7 +60,7 @@ type Store interface {
 	ListHoldsByStatus(ctx context.Context, status string, limit int) ([]domain.Hold, error)
 	ListHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.Hold, error)
 	CountHoldsFiltered(ctx context.Context, status, search string, start, end *time.Time) (int64, error)
-	CountHoldsByStatus(ctx context.Context) (map[string]int64, error)
+	CountHoldsByStatus(ctx context.Context, cutoff time.Time) (map[string]int64, error)
 	GetHold(ctx context.Context, id uuid.UUID) (domain.Hold, error)
 	ListCombosBySubmission(ctx context.Context, submissionID uuid.UUID, cutoff time.Time) ([]domain.HoldCombo, error)
 	SetHoldStatus(ctx context.Context, id uuid.UUID, status domain.HoldStatus) error
@@ -68,6 +69,16 @@ type Store interface {
 	// Reviews
 	CreateReview(ctx context.Context, r domain.Review) error
 	ListReviewsByHold(ctx context.Context, holdID uuid.UUID) ([]domain.Review, error)
+
+	// Verification
+	UpsertVerification(ctx context.Context, submissionID uuid.UUID, verified bool, issues string) error
+	GetVerification(ctx context.Context, submissionID uuid.UUID) (domain.Verification, error)
+
+	// Recipients (email alert subscriptions, admin-managed)
+	ListRecipients(ctx context.Context) ([]domain.Recipient, error)
+	CreateRecipient(ctx context.Context, r domain.Recipient) (domain.Recipient, error)
+	UpdateRecipient(ctx context.Context, r domain.Recipient) (domain.Recipient, error)
+	DeleteRecipient(ctx context.Context, id uuid.UUID) error
 
 	// Auth (users + sessions)
 	UpsertUser(ctx context.Context, u domain.User) (domain.User, error)
@@ -136,7 +147,10 @@ type Clock interface {
 }
 
 // Notifier is the alerting boundary. The no-op adapter is used until real
-// channels (SMTP, webhooks) are wired up.
+// channels (SMTP, webhooks) are wired up. Notify receives events as the
+// pipeline runs; Flush is called once at the end of a run so an adapter can
+// aggregate a digest instead of emailing per event.
 type Notifier interface {
 	Notify(ctx context.Context, e domain.Event) error
+	Flush(ctx context.Context) error
 }

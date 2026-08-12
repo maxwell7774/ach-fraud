@@ -47,7 +47,7 @@ type velocityAlert struct {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	counts, err := s.deps.Store.CountHoldsByStatus(ctx)
+	counts, err := s.deps.Store.CountHoldsByStatus(ctx, s.deps.Clock.Now().AddDate(0, 0, -7))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -89,8 +89,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		jobs = append(jobs, fj)
 	}
 
+	// Velocity groups still "live" (carrying at least one pending hold). A
+	// leak stays visible only while its group is live: once the group's holds
+	// are all decided the money flow is resolved and the leak drops off.
+	live := map[string]bool{}
+	if pendingHolds, err := s.deps.Store.ListHoldsByStatus(ctx, string(domain.HoldPending), 100000); err == nil {
+		for _, h := range pendingHolds {
+			day := ""
+			if h.EffectiveDate != nil {
+				day = h.EffectiveDate.Format("2006-01-02")
+			}
+			live[velocityGroupKey(h.EntryReceiverAcct, h.EntryRdfi, day, h.CustomerID)] = true
+		}
+	}
+
 	var leaks []velocityLeak
-	if events, err := s.deps.Store.ListEvents(ctx, 200, 0); err == nil {
+	seen := map[string]bool{}
+	if events, err := s.deps.Store.ListEvents(ctx, 1000, 0); err == nil {
 		for _, ev := range events {
 			if ev.Type != "velocity_crossed" {
 				continue
@@ -99,6 +114,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(ev.Payload, &a); err != nil || a.Prior <= 0 {
 				continue
 			}
+			key := velocityGroupKey(a.Account, a.Rdfi, a.EffectiveDate, a.CustomerID)
+			if !live[key] || seen[key] {
+				// Only a live group leaks, and only its newest crossing shows
+				// (ListEvents is newest-first, so the first seen wins).
+				continue
+			}
+			seen[key] = true
 			l := velocityLeak{
 				Account: a.Account, Total: a.Total, Prior: a.Prior,
 				Held: a.Held, EffectiveDate: a.EffectiveDate,
@@ -125,4 +147,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		FailedJobs:        jobs,
 		VelocityLeaks:     leaks,
 	})
+}
+
+// velocityGroupKey identifies a same-day velocity group, matching the pipeline's
+// group key so an event can be matched to the holds that keep it live.
+func velocityGroupKey(account, rdfi, effectiveDate, customerID string) string {
+	return account + "|" + rdfi + "|" + effectiveDate + "|" + customerID
 }

@@ -374,6 +374,56 @@ func TestScreenVelocityAlert(t *testing.T) {
 	}
 }
 
+// TestScreenNoLeakWhenEarlierFileHeld: two files each trip the single-entry
+// threshold, so both are held. The second file's velocity_crossed event must
+// not report the first file's held amount as an already-shipped leak.
+func TestScreenNoLeakWhenEarlierFileHeld(t *testing.T) {
+	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	eff := now.AddDate(0, 0, -1)
+	d, st := screenDeps(t, now)
+
+	subA := seedSubmission(t, st, "a.ach", now)
+	seedEntry(t, st, subA, account1, 150000, eff)
+	if _, err := ScreenSubmission(context.Background(), d, subA); err != nil {
+		t.Fatalf("screen a: %v", err)
+	}
+	if got := len(st.HoldsFor(subA)); got != 1 {
+		t.Fatalf("file A holds = %d, want 1", got)
+	}
+
+	subB := seedSubmission(t, st, "b.ach", now)
+	seedEntry(t, st, subB, account1, 120000, eff)
+	if _, err := ScreenSubmission(context.Background(), d, subB); err != nil {
+		t.Fatalf("screen b: %v", err)
+	}
+	if got := len(st.HoldsFor(subB)); got != 1 {
+		t.Fatalf("file B holds = %d, want 1", got)
+	}
+
+	var found *domain.Event
+	for i := range st.Events() {
+		if st.Events()[i].Type == EvVelocityCrossed {
+			found = &st.Events()[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("expected a velocity_crossed event")
+	}
+	var p velocityAlert
+	if err := json.Unmarshal(found.Payload, &p); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if p.Total != 270000 {
+		t.Fatalf("total = %d, want 270000", p.Total)
+	}
+	if p.Held != 120000 {
+		t.Fatalf("held = %d, want 120000", p.Held)
+	}
+	if p.Prior != 0 {
+		t.Fatalf("prior = %d, want 0 (file A's amount was held, not leaked)", p.Prior)
+	}
+}
+
 // TestScreenTransactionalRollback: if hold creation fails mid-screen, the whole
 // screen rolls back — no partial holds and no events.
 func TestScreenTransactionalRollback(t *testing.T) {

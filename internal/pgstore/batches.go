@@ -87,6 +87,27 @@ func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID 
 	return out, nil
 }
 
+func (s *Store) SumHeldByGroup(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error) {
+	rows, err := s.q.SumHeldByGroup(ctx, SumHeldByGroupParams{
+		Column1: toPgDate(&cutoff),
+		ID:      toPgUUID(submissionID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.VelocitySum, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.VelocitySum{
+			ReceiverAccount: r.ReceiverAccount,
+			Rdfi:            r.Rdfi,
+			EffectiveDate:   toDate(r.EffectiveDate),
+			CustomerID:      r.CustomerID,
+			Total:           r.Total,
+		})
+	}
+	return out, nil
+}
+
 func (s *Store) ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error) {
 	rows, err := s.q.ListEntriesFiltered(ctx, ListEntriesFilteredParams{
 		Column1: search,

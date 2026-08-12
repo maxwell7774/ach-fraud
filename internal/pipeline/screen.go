@@ -68,6 +68,19 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 		velocity[velocityKey(vs.ReceiverAccount, vs.Rdfi, vs.CustomerID, vs.EffectiveDate)] += vs.Total
 	}
 
+	// Same-day held totals from OTHER submissions for those same groups, so the
+	// alert's "prior" (already shipped) only counts amounts that were never
+	// held — an earlier single-entry or velocity hold never shipped, so it must
+	// not be reported as a leak.
+	heldByGroup := map[string]int64{}
+	heldSums, err := d.Store.SumHeldByGroup(ctx, cutoff, submissionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, vs := range heldSums {
+		heldByGroup[velocityKey(vs.ReceiverAccount, vs.Rdfi, vs.CustomerID, vs.EffectiveDate)] += vs.Total
+	}
+
 	// This submission's own contribution to each velocity group, used to split
 	// a crossed group's total into what is held now vs. what already shipped.
 	own := map[string]int64{}
@@ -142,7 +155,11 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 				created = append(created, createdHold{id: h.ID, status: domain.HoldPending})
 				if !alerted[gkey] {
 					alerted[gkey] = true
-					created = append(created, createdHold{alert: velocityAlertFor(e, groupVelocity, own[gkey])})
+					prior := groupVelocity - own[gkey] - heldByGroup[gkey]
+					if prior < 0 {
+						prior = 0
+					}
+					created = append(created, createdHold{alert: velocityAlertFor(e, groupVelocity, own[gkey], prior)})
 				}
 			}
 		}
@@ -160,15 +177,15 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 			if err != nil {
 				return nil, err
 			}
-			if err := emit(ctx, d, EvVelocityCrossed, &submissionID, payload); err != nil {
+			if err := Emit(ctx, d, EvVelocityCrossed, &submissionID, payload); err != nil {
 				return nil, err
 			}
 		case c.status == domain.HoldAutoDeclined:
-			if err := emit(ctx, d, EvHoldAutoDeclined, &c.id, nil); err != nil {
+			if err := Emit(ctx, d, EvHoldAutoDeclined, &c.id, nil); err != nil {
 				return nil, err
 			}
 		default:
-			if err := emit(ctx, d, EvHoldCreated, &c.id, nil); err != nil {
+			if err := Emit(ctx, d, EvHoldCreated, &c.id, nil); err != nil {
 				return nil, err
 			}
 		}
@@ -202,17 +219,17 @@ type velocityAlert struct {
 }
 
 // velocityAlertFor describes a crossed same-day velocity group so operators can
-// see how much already shipped before the hold tripped. Prior is the portion
-// that belongs to earlier files (already shipped); Held is this submission's
-// portion (held now).
-func velocityAlertFor(e domain.BatchEntry, total, held int64) *velocityAlert {
+// see how much already shipped before the hold tripped. Prior is the portion of
+// the group that actually shipped (was never held, so earlier holds are not
+// double-counted as leaks); Held is this submission's portion (held now).
+func velocityAlertFor(e domain.BatchEntry, total, held, prior int64) *velocityAlert {
 	return &velocityAlert{
 		Account:       e.ReceiverAccount,
 		Rdfi:          e.Rdfi,
 		EffectiveDate: e.EffectiveDate.Format("2006-01-02"),
 		CustomerID:    e.CustomerID,
 		Total:         total,
-		Prior:         total - held,
+		Prior:         prior,
 		Held:          held,
 	}
 }

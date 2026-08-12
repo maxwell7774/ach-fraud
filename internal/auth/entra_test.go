@@ -162,9 +162,12 @@ func TestMapRole(t *testing.T) {
 		{"watcher", []string{"ACH.Watcher"}, "watcher"},
 		{"processor", []string{"ACH.Processor"}, "processor"},
 		{"admin", []string{"ACH.Admin"}, "admin"},
+		{"super admin", []string{"ACH.SuperAdmin"}, "super_admin"},
 		{"uri form", []string{"https://login.microsoftonline.com/t/app/ACH.Processor"}, "processor"},
 		{"unrelated", []string{"User.Read", "SomeOther"}, ""},
 		{"admin wins over others", []string{"ACH.Watcher", "ACH.Processor", "ACH.Admin"}, "admin"},
+		{"super admin wins over admin", []string{"ACH.Admin", "ACH.SuperAdmin"}, "super_admin"},
+		{"super admin with everything", []string{"ACH.Watcher", "ACH.Processor", "ACH.Admin", "ACH.SuperAdmin"}, "super_admin"},
 		{"processor over watcher", []string{"ACH.Watcher", "ACH.Processor"}, "processor"},
 	}
 	for _, tc := range cases {

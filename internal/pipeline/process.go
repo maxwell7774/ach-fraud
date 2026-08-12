@@ -181,6 +181,9 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 	}
 
 	now := d.Clock.Now()
+	if err := d.Store.UpsertVerification(ctx, submissionID, true, ""); err != nil {
+		return nil, err
+	}
 	if err := d.Store.EnqueueJob(ctx, domain.JobPublishCleaned, submissionID, now); err != nil {
 		return nil, err
 	}

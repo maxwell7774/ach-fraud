@@ -432,4 +432,13 @@ func TestRunPanicRecovers(t *testing.T) {
 	if !strings.Contains(job.LastError, "panic: boom") {
 		t.Fatalf("last_error = %q, want panic message", job.LastError)
 	}
+	failed := false
+	for _, e := range st.Events() {
+		if e.Type == pipeline.EvJobFailed && e.Ref != nil && *e.Ref == ref {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatal("expected a job_failed event for the panicking job")
+	}
 }

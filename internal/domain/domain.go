@@ -126,8 +126,9 @@ type Hold struct {
 	EffectiveDate     *time.Time `json:"effective_date"`
 	CreatedAt         time.Time  `json:"created_at"`
 	// Joined header/submission data (populated by the web reads).
-	CustomerID string `json:"customer_id"`
-	Filename   string `json:"filename"`
+	CustomerID  string `json:"customer_id"`
+	CompanyName string `json:"company_name"`
+	Filename    string `json:"filename"`
 }
 
 // Review records an audit-trail entry for a hold decision.
@@ -139,6 +140,35 @@ type Review struct {
 	Note      string    `json:"note"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Verification records the last automated check that a submission's artifact
+// chain (original → fixed → cleaned → release) balances, so a file still shows
+// it passed even after the artifact bytes are pruned by retention.
+type Verification struct {
+	SubmissionID uuid.UUID `json:"submission_id"`
+	Verified     bool      `json:"verified"`
+	Issues       string    `json:"issues"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
+// Recipient is one email alert recipient. AlertTypes lists the digest
+// categories the recipient receives; only admins change these.
+type Recipient struct {
+	ID         uuid.UUID `json:"id"`
+	Email      string    `json:"email"`
+	Name       string    `json:"name"`
+	Enabled    bool      `json:"enabled"`
+	AlertTypes []string  `json:"alert_types"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Email alert categories, per recipient.
+const (
+	AlertPendingHolds   = "pending_holds"
+	AlertVelocityLeaks  = "velocity_leaks"
+	AlertReleaseBlocked = "release_blocked"
+	AlertFailed         = "failed"
+)
 
 // User is an identity imported from the identity provider (Microsoft Entra).
 // Subject is the stable provider object id; profile fields are refreshed at
@@ -155,21 +185,30 @@ type User struct {
 }
 
 // User roles, canonical values stored on users.role. Least privilege is the
-// default: unknown/new users are watchers.
+// default: unknown/new users are watchers. SuperAdmin is the only role that
+// sees events and manages email alert recipients; Admin covers the rest of the
+// admin surface (files, entries, headers, artifacts).
 const (
-	RoleWatcher   = "watcher"
-	RoleProcessor = "processor"
-	RoleAdmin     = "admin"
+	RoleWatcher    = "watcher"
+	RoleProcessor  = "processor"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
 )
 
 // CanReview reports whether the role may approve/decline holds.
 func (u User) CanReview() bool {
-	return u.Role == RoleProcessor || u.Role == RoleAdmin
+	return u.Role == RoleProcessor || u.Role == RoleAdmin || u.Role == RoleSuperAdmin
 }
 
-// IsAdmin reports whether the role may see files, entries, headers, events.
+// IsAdmin reports whether the role may see files, entries, headers, artifacts.
 func (u User) IsAdmin() bool {
-	return u.Role == RoleAdmin
+	return u.Role == RoleAdmin || u.Role == RoleSuperAdmin
+}
+
+// IsSuperAdmin reports whether the role may also see events and manage email
+// alert recipients.
+func (u User) IsSuperAdmin() bool {
+	return u.Role == RoleSuperAdmin
 }
 
 // Session is a server-side login session bound to a user. TokenHash is the

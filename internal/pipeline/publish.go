@@ -31,7 +31,7 @@ func PublishCleaned(ctx context.Context, d Deps, submissionID uuid.UUID) error {
 		if err := d.Store.SetArtifactState(ctx, cleaned.ID, domain.ArtifactPublished); err != nil {
 			return err
 		}
-		if err := emit(ctx, d, EvInterceptPublished, &submissionID, nil); err != nil {
+		if err := Emit(ctx, d, EvInterceptPublished, &submissionID, nil); err != nil {
 			return err
 		}
 	}
@@ -69,7 +69,7 @@ func PublishRelease(ctx context.Context, d Deps, releaseID uuid.UUID) error {
 			if err := d.Store.SetArtifactState(ctx, release.ID, domain.ArtifactArchived); err != nil {
 				return err
 			}
-			if err := emit(ctx, d, EvReleaseBlocked, &release.ID, nil); err != nil {
+			if err := Emit(ctx, d, EvReleaseBlocked, &release.ID, nil); err != nil {
 				return err
 			}
 			return maybeEnqueueArchive(ctx, d, release.SubmissionID)
@@ -115,7 +115,7 @@ func PublishRelease(ctx context.Context, d Deps, releaseID uuid.UUID) error {
 	if err := d.Store.SetArtifactState(ctx, release.ID, domain.ArtifactPublished); err != nil {
 		return err
 	}
-	if err := emit(ctx, d, EvReleasePublished, &release.SubmissionID, nil); err != nil {
+	if err := Emit(ctx, d, EvReleasePublished, &release.SubmissionID, nil); err != nil {
 		return err
 	}
 	return maybeEnqueueArchive(ctx, d, release.SubmissionID)

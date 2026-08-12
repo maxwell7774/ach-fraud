@@ -72,6 +72,19 @@ type Job struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Recipient struct {
+	ID        pgtype.UUID
+	Email     string
+	Name      string
+	Enabled   bool
+	CreatedAt pgtype.Timestamptz
+}
+
+type RecipientAlert struct {
+	RecipientID pgtype.UUID
+	AlertType   string
+}
+
 type Review struct {
 	ID        pgtype.UUID
 	HoldID    pgtype.UUID
@@ -110,4 +123,11 @@ type User struct {
 	LastLoginAt pgtype.Timestamptz
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type Verification struct {
+	SubmissionID pgtype.UUID
+	Verified     bool
+	Issues       string
+	CheckedAt    pgtype.Timestamptz
 }

@@ -40,9 +40,9 @@ export function Loading(props: { label?: string }) {
 
 const CARD_DESCRIPTIONS: Record<string, string> = {
   pending: "Awaiting your review",
-  approved: "Released",
-  declined: "Not released",
-  auto_declined: "Screened out",
+  approved: "Released · last 7 days",
+  declined: "Not released · last 7 days",
+  auto_declined: "Screened out · last 7 days",
 };
 
 export function Cards(props: { counts: Record<string, number> }) {
@@ -394,6 +394,45 @@ export function Select(props: {
   );
 }
 
+export function RowMenu(props: {
+  actions: { label: string; onClick: () => void; danger?: boolean }[];
+}) {
+  const [id] = createSignal(`menu-${++menuSeq}`);
+  const popId = () => `${id()}-pop`;
+  function hide() {
+    document.getElementById(popId())?.hidePopover();
+  }
+  return (
+    <>
+      <button
+        id={`${id()}-btn`}
+        class="btn btn-outline btn-sm btn-icon"
+        type="button"
+        aria-label="Actions"
+        popovertarget={popId()}
+      >
+        <EllipsisIcon />
+      </button>
+      <div id={popId()} popover="auto" class="popover-menu action-popover">
+        <For each={props.actions}>
+          {(a) => (
+            <button
+              class={`btn ${a.danger ? "btn-decline" : ""}`}
+              type="button"
+              onClick={() => {
+                hide();
+                a.onClick();
+              }}
+            >
+              {a.label}
+            </button>
+          )}
+        </For>
+      </div>
+    </>
+  );
+}
+
 export function RowActions(props: {
   holdId: string;
   onApprove: () => void;
@@ -466,10 +505,9 @@ export function HoldTable(props: { holds: Hold[] }) {
           <tr>
             <th>Status</th>
             <th>Account</th>
-            <th>Receiver</th>
             <th>Amount</th>
             <th>RDFI</th>
-            <th>File</th>
+            <th>Customer</th>
           </tr>
         </thead>
         <tbody>
@@ -483,14 +521,19 @@ export function HoldTable(props: { holds: Hold[] }) {
                   <A href={`/holds/${h.id}`} class="file-link">
                     {h.entry_receiver_account}
                   </A>
+                  <Show when={h.entry_receiver_name}>
+                    <span class="cell-sub">{h.entry_receiver_name}</span>
+                  </Show>
                 </td>
-                <td data-label="Receiver">{h.entry_receiver_name}</td>
                 <td data-label="Amount" class="amount">
                   {dollars(h.entry_amount)}
                 </td>
                 <td data-label="RDFI">{h.entry_rdfi}</td>
-                <td data-label="File" class="muted">
-                  {h.filename}
+                <td data-label="Customer">
+                  <span class="muted truncate">{h.customer_id || "—"}</span>
+                  <Show when={h.company_name}>
+                    <span class="cell-sub">{h.company_name}</span>
+                  </Show>
                 </td>
               </tr>
             )}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/27actions/ach/internal/worker"
 
@@ -20,6 +21,10 @@ their holds are approved. A release waiting on approval is re-checked on every
 run. Run is safe to call repeatedly: jobs are idempotent, so work left undone
 by a previous run is picked up here.
 
+At the end of the run one digest email is sent (when email is configured and
+something alert-worthy happened): the pending holds, velocity leaks, blocked
+releases, and failures from this run.
+
 For example:
 
     ach run`,
@@ -31,6 +36,14 @@ For example:
 		defer close()
 
 		ctx := context.Background()
+		// Flush the run digest even if the run errored part-way, so the events
+		// that did occur are still reported.
+		defer func() {
+			if ferr := d.Notifier.Flush(ctx); ferr != nil {
+				log.Printf("run: email digest: %v", ferr)
+			}
+		}()
+
 		rep, err := worker.New(*d).Run(ctx, in)
 		if err != nil {
 			return err

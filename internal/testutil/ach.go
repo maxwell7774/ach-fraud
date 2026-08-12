@@ -11,11 +11,12 @@ import (
 
 // Entry describes one credit entry in a built file.
 type Entry struct {
-	Account string // DFI account number
-	Name    string // individual name
-	Amount  int    // cents
-	RDFI    string // 9-digit routing number
-	Trace   int    // sequence for the trace number
+	Account        string // DFI account number
+	Name           string // individual name
+	Identification string // IndividualIdentification (receiver tax id / SSN)
+	Amount         int    // cents
+	RDFI           string // 9-digit routing number
+	Trace          int    // sequence for the trace number
 }
 
 // CreditFile builds a single-batch PPD credit file with the given entries and
@@ -57,6 +58,7 @@ func CreditFile(entries []Entry, effectiveDate string) ([]byte, error) {
 		ed.CheckDigit = e.RDFI[8:]
 		ed.DFIAccountNumber = e.Account
 		ed.Amount = e.Amount
+		ed.IdentificationNumber = e.Identification
 		ed.IndividualName = e.Name
 		seq := e.Trace
 		if seq == 0 {

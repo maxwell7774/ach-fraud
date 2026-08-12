@@ -28,10 +28,13 @@ type Store struct {
 	reviews []domain.Review
 	users   map[uuid.UUID]domain.User
 	sess    map[uuid.UUID]domain.Session
+	verifs  map[uuid.UUID]domain.Verification
+	recips  map[uuid.UUID]domain.Recipient
 	jobs    map[string]*domain.Job
 	order   []uuid.UUID
 	updated map[uuid.UUID]time.Time
 	artUpd  map[uuid.UUID]time.Time
+	holdUpd map[uuid.UUID]time.Time
 	events  []domain.Event
 
 	// Now supplies the time for ClaimDueJob, RequeueStaleJobs, and artifact
@@ -53,9 +56,12 @@ func NewStore() *Store {
 		holds:   map[uuid.UUID]domain.Hold{},
 		users:   map[uuid.UUID]domain.User{},
 		sess:    map[uuid.UUID]domain.Session{},
+		verifs:  map[uuid.UUID]domain.Verification{},
+		recips:  map[uuid.UUID]domain.Recipient{},
 		jobs:    map[string]*domain.Job{},
 		updated: map[uuid.UUID]time.Time{},
 		artUpd:  map[uuid.UUID]time.Time{},
+		holdUpd: map[uuid.UUID]time.Time{},
 		Now:     time.Now,
 	}
 }
@@ -154,10 +160,13 @@ type storeState struct {
 	reviews []domain.Review
 	users   map[uuid.UUID]domain.User
 	sess    map[uuid.UUID]domain.Session
+	verifs  map[uuid.UUID]domain.Verification
+	recips  map[uuid.UUID]domain.Recipient
 	jobs    map[string]*domain.Job
 	order   []uuid.UUID
 	updated map[uuid.UUID]time.Time
 	artUpd  map[uuid.UUID]time.Time
+	holdUpd map[uuid.UUID]time.Time
 	events  []domain.Event
 }
 
@@ -179,10 +188,13 @@ func (s *Store) snapshot() storeState {
 		reviews: append([]domain.Review(nil), s.reviews...),
 		users:   maps.Clone(s.users),
 		sess:    maps.Clone(s.sess),
+		verifs:  maps.Clone(s.verifs),
+		recips:  maps.Clone(s.recips),
 		jobs:    cloneJobs(s.jobs),
 		order:   append([]uuid.UUID(nil), s.order...),
 		updated: maps.Clone(s.updated),
 		artUpd:  maps.Clone(s.artUpd),
+		holdUpd: maps.Clone(s.holdUpd),
 		events:  append([]domain.Event(nil), s.events...),
 	}
 }
@@ -196,10 +208,13 @@ func (s *Store) restore(snap storeState) {
 	s.reviews = snap.reviews
 	s.users = snap.users
 	s.sess = snap.sess
+	s.verifs = snap.verifs
+	s.recips = snap.recips
 	s.jobs = snap.jobs
 	s.order = snap.order
 	s.updated = snap.updated
 	s.artUpd = snap.artUpd
+	s.holdUpd = snap.holdUpd
 	s.events = snap.events
 }
 

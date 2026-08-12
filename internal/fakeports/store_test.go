@@ -130,6 +130,59 @@ func TestUpsertUserRoleSemantics(t *testing.T) {
 	}
 }
 
+func TestVerificationUpsert(t *testing.T) {
+	st := NewStore()
+	ctx := context.Background()
+	id := uuid.New()
+	if _, err := st.GetVerification(ctx, id); err != domain.ErrNotFound {
+		t.Fatalf("expected not found, got %v", err)
+	}
+	if err := st.UpsertVerification(ctx, id, true, ""); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	v, err := st.GetVerification(ctx, id)
+	if err != nil || !v.Verified {
+		t.Fatalf("get = %+v, %v", v, err)
+	}
+	if err := st.UpsertVerification(ctx, id, false, "boom"); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+	v, _ = st.GetVerification(ctx, id)
+	if v.Verified || v.Issues != "boom" {
+		t.Fatalf("update not applied: %+v", v)
+	}
+}
+
+func TestRecipientCRUD(t *testing.T) {
+	st := NewStore()
+	ctx := context.Background()
+	rec, err := st.CreateRecipient(ctx, domain.Recipient{
+		Email: "ops@corp.com", Name: "Ops", Enabled: true, AlertTypes: []string{domain.AlertPendingHolds},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if rec.ID == uuid.Nil || rec.Email != "ops@corp.com" {
+		t.Fatalf("created = %+v", rec)
+	}
+	recs, err := st.ListRecipients(ctx)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("list = %+v, %v", recs, err)
+	}
+	rec.Enabled = false
+	rec.AlertTypes = []string{domain.AlertFailed}
+	updated, err := st.UpdateRecipient(ctx, rec)
+	if err != nil || updated.Enabled || len(updated.AlertTypes) != 1 {
+		t.Fatalf("update = %+v, %v", updated, err)
+	}
+	if err := st.DeleteRecipient(ctx, rec.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := st.DeleteRecipient(ctx, rec.ID); err != domain.ErrNotFound {
+		t.Fatalf("delete missing = %v, want ErrNotFound", err)
+	}
+}
+
 func TestSessionsCRUD(t *testing.T) {
 	st := NewStore()
 	ctx := context.Background()

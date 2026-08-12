@@ -19,6 +19,5 @@
     "auth_disabled": false,
     "mail_enabled": false,
     "shared_mailbox": "",
-    "alert_emails": "",
     "app_base_url": ""
 }

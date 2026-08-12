@@ -135,3 +135,37 @@ WHERE s.status IN ('ready', 'archived')
     WHERE j.kind = 'process' AND j.ref = s.id AND j.state = 'failed'
   )
 GROUP BY be.receiver_account, be.rdfi, bh.effective_date, bh.customer_id;
+
+-- name: SumHeldByGroup :many
+-- Same-day held totals for the groups present in the submission being screened,
+-- summed across OTHER submissions' holds, so a velocity alert can report how
+-- much of a crossed group truly shipped (was never held) versus how much was
+-- already intercepted by an earlier file.
+WITH target_groups AS (
+    SELECT DISTINCT be2.receiver_account, be2.rdfi, bh2.effective_date, bh2.customer_id
+    FROM batch_entries be2
+    JOIN batch_headers bh2 ON bh2.id = be2.header_id
+    WHERE bh2.submission_id = $2
+      AND be2.tran_code IN (22, 32)
+      AND bh2.effective_date >= $1::date
+)
+SELECT be.receiver_account, be.rdfi, bh.effective_date, bh.customer_id,
+       SUM(be.amount)::bigint AS total
+FROM holds h
+JOIN batch_entries be ON be.id = h.entry_id
+JOIN batch_headers bh ON bh.id = be.header_id
+JOIN submissions s ON s.id = bh.submission_id
+JOIN target_groups tg
+  ON tg.receiver_account = be.receiver_account
+ AND tg.rdfi = be.rdfi
+ AND tg.effective_date = bh.effective_date
+ AND tg.customer_id = bh.customer_id
+WHERE s.id <> $2
+  AND s.status IN ('ready', 'archived')
+  AND be.tran_code IN (22, 32)
+  AND bh.effective_date >= $1::date
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.kind = 'process' AND j.ref = s.id AND j.state = 'failed'
+  )
+GROUP BY be.receiver_account, be.rdfi, bh.effective_date, bh.customer_id;

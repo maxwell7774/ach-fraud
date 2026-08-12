@@ -14,3 +14,5 @@ import (
 type Noop struct{}
 
 func (Noop) Notify(context.Context, domain.Event) error { return nil }
+
+func (Noop) Flush(context.Context) error { return nil }

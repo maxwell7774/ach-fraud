@@ -91,6 +91,25 @@ export default function SubmissionDetail() {
           </Show>
 
           <h2 class="section">Verification</h2>
+          <Show when={s().verification} fallback={<p class="empty">No automated verification recorded yet.</p>}>
+            {(v) => (
+              <div class="detail-card">
+                <div class="detail-grid">
+                  <div class="key">Last check</div>
+                  <div class="val">
+                    <span class="verify-line">
+                      <Badge status={v().verified ? "verified" : "fail"} />
+                      <span>{fmtDateTime(v().checked_at)}</span>
+                    </span>
+                  </div>
+                  <Show when={v().issues}>
+                    <div class="key">Issues</div>
+                    <div class="val muted">{v().issues}</div>
+                  </Show>
+                </div>
+              </div>
+            )}
+          </Show>
           <Show when={verify()} fallback={<Loading label="Checking artifact chain…" />}>
             {(v) => (
               <>
@@ -150,10 +169,12 @@ export default function SubmissionDetail() {
                       <thead>
                         <tr>
                           <th>Trace</th>
+                          <th>Sender</th>
                           <th>Amount</th>
                           <th>Original acct</th>
                           <th>Fixed acct</th>
                           <th>Cleaned acct</th>
+                          <th>Release acct</th>
                           <th>Receiver kept</th>
                         </tr>
                       </thead>
@@ -162,10 +183,17 @@ export default function SubmissionDetail() {
                           {(e) => (
                             <tr>
                               <td data-label="Trace">{e.trace}</td>
+                              <td data-label="Sender">
+                                {e.sender}
+                                <Show when={e.sender_name}>
+                                  <span class="cell-sub">{e.sender_name}</span>
+                                </Show>
+                              </td>
                               <td data-label="Amount" class="amount">{dollars(e.amount)}</td>
                               <td data-label="Original acct">{e.original_account}</td>
                               <td data-label="Fixed acct">{e.fixed_account}</td>
-                              <td data-label="Cleaned acct">{e.cleaned_account || "—"}</td>
+                              <td data-label="Cleaned acct">{e.cleaned_account}</td>
+                              <td data-label="Release acct">{e.release_account || "—"}</td>
                               <td data-label="Receiver kept">
                                 <Badge status={e.receiver_kept ? "pass" : "fail"} />
                               </td>

@@ -266,6 +266,25 @@ tr:hover { background: var(--hover); }
 td { vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 
+/* Condensed hold tables: long values truncate instead of stretching the row. */
+.cell-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: .78rem;
+  line-height: 1.3;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.truncate {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Status badges */
 .badge {
   display: inline-flex;
@@ -307,6 +326,7 @@ tr:last-child td { border-bottom: none; }
 .badge-in_progress { background: var(--pending-bg); color: var(--pending-text); }
 .badge-done     { background: var(--approved-bg); color: var(--approved-text); }
 .badge-group {
+  margin-top: 3px;
   background: var(--accent-soft, var(--pending-bg));
   color: var(--accent, var(--pending-text));
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
@@ -366,7 +386,7 @@ p.loading { display: flex; align-items: center; justify-content: center; gap: 10
 .filter-bar .label { font-size: .775rem; color: var(--text-muted); }
 .search-bar { margin-bottom: 20px; }
 .search-bar form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.search-bar input[type="search"], .search-bar input[type="text"] { padding: 6px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: .825rem; min-width: 220px; }
+.search-bar input[type="search"], .search-bar input[type="text"] { padding: 8px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: .825rem; line-height: 1.4; min-width: 220px; }
 .search-bar input[type="date"] { padding: 5px 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: .825rem; }
 .search-bar label { font-size: .825rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
 .amount { white-space: nowrap; }
@@ -458,6 +478,67 @@ p.loading { display: flex; align-items: center; justify-content: center; gap: 10
 .detail-grid .key { color: var(--text-muted); font-weight: 500; white-space: nowrap; }
 .detail-grid .val { word-break: break-all; }
 
+/* Recipients page */
+.recipient-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+.recipient-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: .8rem;
+  color: var(--text-muted);
+}
+.recipient-form input[type="text"],
+.recipient-form input[type="email"] {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: .825rem;
+  line-height: 1.4;
+}
+.recipient-form .check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.recipient-form .alert-options,
+.recipient-form .btn-group {
+  grid-column: 1 / -1;
+}
+.recipient-form .alert-options {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Recipient alert-type badges: one wrapped group so they never spread across
+   the responsive row, with breathing room between them. */
+.alert-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.alert-badges .badge-group {
+  margin-top: 0;
+}
+.verify-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 /* Bulk actions bar */
 .bulk-bar {
   display: flex;
@@ -473,7 +554,8 @@ p.loading { display: flex; align-items: center; justify-content: center; gap: 10
 /* Checkbox */
 .selectable-row td:first-child { width: 44px; }
 .selectable-row input[type="checkbox"],
-#selAll {
+#selAll,
+.recipient-form input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
   width: 16px;
@@ -489,12 +571,14 @@ p.loading { display: flex; align-items: center; justify-content: center; gap: 10
   vertical-align: middle;
 }
 .selectable-row input[type="checkbox"]:checked,
-#selAll:checked {
+#selAll:checked,
+.recipient-form input[type="checkbox"]:checked {
   border-color: var(--gold);
   background: var(--gold);
 }
 .selectable-row input[type="checkbox"]:checked::after,
-#selAll:checked::after {
+#selAll:checked::after,
+.recipient-form input[type="checkbox"]:checked::after {
   content: "✓";
   color: #fff;
   font-size: 11px;
@@ -502,7 +586,8 @@ p.loading { display: flex; align-items: center; justify-content: center; gap: 10
   line-height: 1;
 }
 .selectable-row input[type="checkbox"]:focus-visible,
-#selAll:focus-visible {
+#selAll:focus-visible,
+.recipient-form input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--gold);
   outline-offset: 1px;
 }
@@ -692,12 +777,13 @@ th.sort-asc .sort-icon, th.sort-desc .sort-icon { color: var(--gold); }
   align-items: center;
   gap: 6px;
   width: 138px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
   font-family: inherit;
   font-size: .825rem;
+  line-height: 1.4;
   cursor: pointer;
 }
 .date-picker:hover { background: var(--btn-outline-hover); }

@@ -5,6 +5,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -100,6 +101,7 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) (out outcome) {
 			if ferr := w.deps.Store.FailJob(ctx, job.ID, msg); ferr != nil {
 				log.Printf("worker: recording panic for job %s: %v", job.ID, ferr)
 			}
+			w.emitFailure(ctx, job, msg)
 			out = outcomeFailed
 		}
 	}()
@@ -115,12 +117,28 @@ func (w *Worker) runJob(ctx context.Context, job *domain.Job) (out outcome) {
 		if ferr := w.deps.Store.FailJob(ctx, job.ID, err.Error()); ferr != nil {
 			return outcomeFailed
 		}
+		w.emitFailure(ctx, job, err.Error())
 		return outcomeFailed
 	default:
 		if cerr := w.deps.Store.CompleteJob(ctx, job.ID); cerr != nil {
 			return outcomeFailed
 		}
 		return outcomeDone
+	}
+}
+
+// emitFailure records a job_failed event so the run digest can report it. Best
+// effort: a failure to record must not mask the job failure itself.
+func (w *Worker) emitFailure(ctx context.Context, job *domain.Job, reason string) {
+	payload, err := json.Marshal(map[string]string{
+		"kind":  string(job.Kind),
+		"error": reason,
+	})
+	if err != nil {
+		return
+	}
+	if eerr := pipeline.Emit(ctx, w.deps, pipeline.EvJobFailed, &job.Ref, payload); eerr != nil {
+		log.Printf("worker: recording job_failed event for %s: %v", job.ID, eerr)
 	}
 }
 
