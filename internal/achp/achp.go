@@ -67,6 +67,10 @@ func rebuild(file *ach.File, transform func(*ach.EntryDetail) *ach.EntryDetail) 
 		if err != nil {
 			return nil, fmt.Errorf("creating batch: %w", err)
 		}
+		// The source file may have been read leniently (e.g. a CCD entry with
+		// more addenda records than the batch type allows); the rebuilt batch
+		// must carry the same validation opts so Create() does not reject it.
+		fixed.SetValidation(file.GetValidation())
 		for _, entry := range batch.GetEntries() {
 			e := entry
 			if transform != nil {

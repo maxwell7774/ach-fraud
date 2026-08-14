@@ -57,6 +57,84 @@ func TestRebuildRoundTrips(t *testing.T) {
 	}
 }
 
+// TestRebuildToleratesExtraAddenda: a file read leniently may carry more
+// addenda records than its batch type allows (e.g. a CCD entry with two
+// Addenda05 records). Rebuild must preserve the lenient validation rather than
+// rejecting the reconstructed batch during Create().
+func TestRebuildToleratesExtraAddenda(t *testing.T) {
+	file := ach.NewFile()
+	hdr := ach.NewFileHeader()
+	hdr.ImmediateDestination = "121042882"
+	hdr.ImmediateOrigin = "231380104"
+	hdr.ImmediateDestinationName = "My Bank"
+	hdr.ImmediateOriginName = "My Bank"
+	hdr.FileCreationDate = "260101"
+	file.SetHeader(hdr)
+
+	bh := ach.NewBatchHeader()
+	bh.ServiceClassCode = ach.CreditsOnly
+	bh.CompanyName = "Acme Corp"
+	bh.CompanyIdentification = "12104288"
+	bh.StandardEntryClassCode = ach.CCD
+	bh.CompanyEntryDescription = "PAYMENT"
+	bh.ODFIIdentification = "12104288"
+	bh.EffectiveEntryDate = "260101"
+
+	ed := ach.NewEntryDetail()
+	ed.TransactionCode = ach.CheckingCredit
+	ed.RDFIIdentification = "23138010"
+	ed.CheckDigit = "4"
+	ed.DFIAccountNumber = "111111"
+	ed.Amount = 5000
+	ed.IndividualName = "A"
+	ed.SetTraceNumber("12104288", 1)
+	ed.AddendaRecordIndicator = 1
+
+	a1 := ach.NewAddenda05()
+	a1.PaymentRelatedInformation = "first"
+	a2 := ach.NewAddenda05()
+	a2.PaymentRelatedInformation = "second"
+	ed.AddAddenda05(a1)
+	ed.AddAddenda05(a2)
+
+	batch, err := ach.NewBatch(bh)
+	if err != nil {
+		t.Fatalf("creating batch: %v", err)
+	}
+	batch.SetValidation(&ach.ValidateOpts{BypassBatchValidation: true})
+	batch.AddEntry(ed)
+	if err := batch.Create(); err != nil {
+		t.Fatalf("building batch: %v", err)
+	}
+	file.AddBatch(batch)
+	if err := file.Create(); err != nil {
+		t.Fatalf("building file: %v", err)
+	}
+
+	var buf strings.Builder
+	w := ach.NewWriter(&buf)
+	if err := w.Write(file); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	parsed := read(t, []byte(buf.String()))
+	entries := parsed.Batches[0].GetEntries()
+	if len(entries) != 1 || len(entries[0].Addenda05) != 2 {
+		t.Fatalf("expected 1 entry with 2 addenda, got %d entries / %d addenda", len(entries), len(entries[0].Addenda05))
+	}
+
+	fixed, err := Rebuild(parsed)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if TotalEntries(fixed) != 1 {
+		t.Fatalf("expected 1 entry, got %d", TotalEntries(fixed))
+	}
+}
+
 func TestVerifySame(t *testing.T) {
 	a := read(t, mustCredit(t, []testutil.Entry{{Account: "111111", Name: "A", Amount: 5000, RDFI: "231380104"}}))
 	b := read(t, mustCredit(t, []testutil.Entry{{Account: "111111", Name: "A", Amount: 5000, RDFI: "231380104"}}))
