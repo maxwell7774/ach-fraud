@@ -1,0 +1,100 @@
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { createAsync, useAction } from "@solidjs/router";
+import { jobsQuery, requeueJobAction } from "../queries";
+import { api, fmtDateTime, human, type Job } from "../api";
+import { EmptyState, Loading, Select } from "../components";
+import { useFlash } from "../flash";
+import { useConfirm } from "../confirm";
+
+const STATES = [
+  { value: "failed", label: "Failed" },
+  { value: "queued", label: "Queued" },
+  { value: "in_progress", label: "In progress" },
+  { value: "done", label: "Done" },
+];
+
+export default function Jobs() {
+  const { show: flash } = useFlash();
+  const { confirm } = useConfirm();
+  const requeue = useAction(requeueJobAction);
+  const [state, setState] = createSignal("failed");
+
+  const key = createMemo(() => ({ state: state() }));
+  const data = createAsync(() => jobsQuery(key()));
+
+  async function onRequeue(j: Job) {
+    if (!(await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" })))
+      return;
+    const res = await requeue({ id: j.id });
+    if (!res.ok) {
+      flash("error", res.error ?? "failed to requeue job");
+      return;
+    }
+    flash("success", "Job requeued — the next run will retry it");
+  }
+
+  return (
+    <>
+      <h1>Jobs</h1>
+      <p class="section-note">
+        The pipeline outbox. Failed jobs are retried after a code fix or a transient
+        error by requeueing them — the next run picks them up again.
+      </p>
+      <div class="search-bar">
+        <label>
+          State{" "}
+          <Select
+            value={state()}
+            onChange={setState}
+            options={STATES}
+          />
+        </label>
+      </div>
+      <Show when={data()} fallback={<Loading label="Loading jobs…" />}>
+        <div class="table-wrap">
+          <Show
+            when={data()!.jobs.length > 0}
+            fallback={<EmptyState message={`No ${state()} jobs.`} />}
+          >
+            <table class="responsive">
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th>State</th>
+                  <th>Failures</th>
+                  <th>Run at</th>
+                  <th>Last error</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={data()!.jobs}>
+                  {(j) => (
+                    <tr>
+                      <td data-label="Kind">{j.kind.replace(/_/g, " ")}</td>
+                      <td data-label="State">{human(j.state)}</td>
+                      <td data-label="Failures">{j.failures}</td>
+                      <td data-label="Run at" class="muted">
+                        {fmtDateTime(j.run_at)}
+                      </td>
+                      <td data-label="Last error" class="muted">
+                        {j.last_error || "—"}
+                      </td>
+                      <td data-label="Actions">
+                        <Show when={j.state === "failed" || j.state === "in_progress"}>
+                          <button class="btn btn-outline btn-sm" type="button" onClick={() => onRequeue(j)}>
+                            Requeue
+                          </button>
+                        </Show>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </Show>
+        </div>
+      </Show>
+    </>
+  );
+}

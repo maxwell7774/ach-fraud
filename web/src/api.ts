@@ -177,6 +177,10 @@ export interface EventsPage {
   total: number;
 }
 
+export interface JobsPage {
+  jobs: Job[];
+}
+
 export interface ArtifactSum {
   present: boolean;
   entries: number;
@@ -208,6 +212,7 @@ export interface SubmissionVerify {
 
 export interface ListParams {
   status?: string;
+  state?: string;
   q?: string;
   start_date?: string;
   end_date?: string;
@@ -258,6 +263,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 function qs(p: ListParams): string {
   const parts: string[] = [];
   if (p.status) parts.push(`status=${encodeURIComponent(p.status)}`);
+  if (p.state) parts.push(`state=${encodeURIComponent(p.state)}`);
   if (p.q) parts.push(`q=${encodeURIComponent(p.q)}`);
   if (p.start_date) parts.push(`start_date=${p.start_date}`);
   if (p.end_date) parts.push(`end_date=${p.end_date}`);
@@ -295,6 +301,8 @@ export const api = {
       return r.text();
     }),
   events: (p: ListParams = {}) => req<EventsPage>(`/api/events${qs(p)}`),
+  jobs: (p: ListParams = {}) => req<JobsPage>(`/api/jobs${qs(p)}`),
+  requeueJob: (id: string) => req(`/api/jobs/${id}/requeue`, { method: "POST" }),
   recipients: () => req<RecipientsPage>("/api/recipients"),
   createRecipient: (body: RecipientInput) =>
     req<Recipient>("/api/recipients", { method: "POST", body: JSON.stringify(body) }),
@@ -304,7 +312,7 @@ export const api = {
 };
 
 export function dollars(cents: number): string {
-  return "$" + (cents / 100).toFixed(2);
+  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 const LABELS: Record<string, string> = {

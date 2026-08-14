@@ -1,13 +1,19 @@
 import { createSignal, For, Show } from "solid-js";
-import { useParams, A } from "@solidjs/router";
+import { useParams, A, useAction } from "@solidjs/router";
 import { createAsync } from "@solidjs/router";
-import { submissionQuery, verifyQuery } from "../queries";
-import { api, dollars, fmtDateTime } from "../api";
+import { submissionQuery, verifyQuery, requeueJobAction } from "../queries";
+import { api, dollars, fmtDateTime, type Job } from "../api";
 import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination } from "../components";
 import { ArrowLeftIcon } from "../icons";
+import { useFlash } from "../flash";
+import { useConfirm } from "../confirm";
+import { isSuperAdmin } from "../user";
 
 export default function SubmissionDetail() {
   const params = useParams<{ id: string }>();
+  const { show: flash } = useFlash();
+  const { confirm } = useConfirm();
+  const requeue = useAction(requeueJobAction);
   const [holdPage, setHoldPage] = createSignal(1);
   const [holdPageSize, setHoldPageSize] = createSignal(25);
   const [entryPage, setEntryPage] = createSignal(1);
@@ -28,6 +34,17 @@ export default function SubmissionDetail() {
     }
     setViewing(id);
     setContent(await api.artifactContent(id));
+  }
+
+  async function onRequeue(j: Job) {
+    if (!(await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" })))
+      return;
+    const res = await requeue({ id: j.id });
+    if (!res.ok) {
+      flash("error", res.error ?? "failed to requeue job");
+      return;
+    }
+    flash("success", "Job requeued — the next run will retry it");
   }
 
   return (
@@ -241,6 +258,9 @@ export default function SubmissionDetail() {
                     <th>State</th>
                     <th>Failures</th>
                     <th>Last error</th>
+                    <Show when={isSuperAdmin()}>
+                      <th>Actions</th>
+                    </Show>
                   </tr>
                 </thead>
                 <tbody>
@@ -253,6 +273,15 @@ export default function SubmissionDetail() {
                         </td>
                         <td data-label="Failures">{j.failures}</td>
                         <td data-label="Last error" class="muted">{j.last_error || "—"}</td>
+                        <Show when={isSuperAdmin()}>
+                          <td data-label="Actions">
+                            <Show when={j.state === "failed" || j.state === "in_progress"}>
+                              <button class="btn btn-outline btn-sm" type="button" onClick={() => onRequeue(j)}>
+                                Requeue
+                              </button>
+                            </Show>
+                          </td>
+                        </Show>
                       </tr>
                     )}
                   </For>

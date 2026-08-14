@@ -18,6 +18,7 @@ export const verifyQuery = query(
 export const entriesQuery = query((p: ListParams) => api.entries(p), "entries");
 export const headersQuery = query((p: ListParams) => api.headers(p), "headers");
 export const eventsQuery = query((p: ListParams) => api.events(p), "events");
+export const jobsQuery = query((p: ListParams) => api.jobs(p), "jobs");
 export const recipientsQuery = query(() => api.recipients(), "recipients");
 
 // Mutations. After a successful action, Solid Router revalidates the queries
@@ -87,3 +88,12 @@ export const deleteRecipientAction = action(async (args: { id: string }) => {
     return { ok: false as const, error: String(e) };
   }
 }, "deleteRecipient");
+
+export const requeueJobAction = action(async (args: { id: string }) => {
+  try {
+    await api.requeueJob(args.id);
+    return { ok: true as const };
+  } catch (e) {
+    return { ok: false as const, error: String(e) };
+  }
+}, "requeueJob");

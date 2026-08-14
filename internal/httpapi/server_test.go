@@ -214,6 +214,58 @@ func TestListHoldsSortByCustomer(t *testing.T) {
 	}
 }
 
+func TestJobsListAndRequeue(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+
+	ref := uuid.New()
+	if err := st.EnqueueJob(ctx, domain.JobFixSubmission, ref, time.Now()); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := st.ClaimDueJob(ctx)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if job == nil {
+		t.Fatal("no job claimed")
+	}
+	if err := st.FailJob(ctx, job.ID, "boom"); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+
+	var page jobsPage
+	rr := get(t, s, "/api/jobs?state=failed")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Jobs) != 1 || page.Jobs[0].State != domain.JobFailed || page.Jobs[0].LastError != "boom" {
+		t.Fatalf("jobs = %+v", page.Jobs)
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("POST", "/api/jobs/"+job.ID.String()+"/requeue", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("requeue = %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = get(t, s, "/api/jobs?state=queued")
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Jobs) != 1 || page.Jobs[0].State != domain.JobQueued || page.Jobs[0].LastError != "" {
+		t.Fatalf("jobs after requeue = %+v", page.Jobs)
+	}
+
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("POST", "/api/jobs/"+uuid.NewString()+"/requeue", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("requeue unknown = %d, want 404", rr.Code)
+	}
+}
+
 func TestRecipientsCRUD(t *testing.T) {
 	s, _ := testServer(t)
 
@@ -647,7 +699,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 	}
 
 	// Watchers may not approve/decline, and only admins see files/events.
-	for _, p := range []string{"/api/submissions", "/api/events"} {
+	for _, p := range []string{"/api/submissions", "/api/events", "/api/jobs"} {
 		rr := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), watcher))
 		if rr.Code != http.StatusForbidden {
@@ -687,7 +739,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 			t.Fatalf("admin %s = %d, want 200", p, rr.Code)
 		}
 	}
-	for _, p := range []string{"/api/events", "/api/recipients"} {
+	for _, p := range []string{"/api/events", "/api/recipients", "/api/jobs"} {
 		rr := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), admin))
 		if rr.Code != http.StatusForbidden {
@@ -703,7 +755,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 
 	// Super admins do everything, including events and recipients.
 	superAdmin := loginAs(t, s, fe, []string{"ACH.SuperAdmin"})
-	for _, p := range []string{"/api/dashboard", "/api/holds", "/api/submissions", "/api/entries", "/api/headers", "/api/events", "/api/recipients"} {
+	for _, p := range []string{"/api/dashboard", "/api/holds", "/api/submissions", "/api/entries", "/api/headers", "/api/events", "/api/recipients", "/api/jobs"} {
 		rr := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), superAdmin))
 		if rr.Code != http.StatusOK {

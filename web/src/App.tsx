@@ -11,6 +11,7 @@ import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
 import Headers from "./pages/Headers";
 import Events from "./pages/Events";
+import Jobs from "./pages/Jobs";
 import Recipients from "./pages/Recipients";
 import { Loading } from "./components";
 import { MenuIcon, XIcon } from "./icons";
@@ -36,6 +37,7 @@ const LINKS = [
   { href: "/entries", label: "Entries", admin: true },
   { href: "/headers", label: "Headers", admin: true },
   { href: "/events", label: "Events", superAdmin: true },
+  { href: "/jobs", label: "Jobs", superAdmin: true },
   { href: "/recipients", label: "Recipients", superAdmin: true },
 ];
 
@@ -204,6 +206,7 @@ export default function App() {
             <Route path="/entries" component={Entries} />
             <Route path="/headers" component={Headers} />
             <Route path="/events" component={Events} />
+            <Route path="/jobs" component={Jobs} />
             <Route path="/recipients" component={Recipients} />
             <Route path="*404" component={() => <p>Not found</p>} />
           </Router>

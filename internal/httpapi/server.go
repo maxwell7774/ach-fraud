@@ -71,6 +71,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/headers", s.handleListHeaders)
 	mux.HandleFunc("GET /api/artifacts/{id}/content", s.handleArtifactContent)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
+	mux.HandleFunc("POST /api/jobs/{id}/requeue", s.handleRequeueJob)
 	mux.HandleFunc("GET /api/recipients", s.handleListRecipients)
 	mux.HandleFunc("POST /api/recipients", s.handleCreateRecipient)
 	mux.HandleFunc("PUT /api/recipients/{id}", s.handleUpdateRecipient)
@@ -115,8 +117,8 @@ func (s *Server) requireAPI(next http.Handler) http.Handler {
 
 // authorized enforces the role matrix: everyone may view the dashboard and
 // holds; watchers may not review; admins see files/entries/headers/artifacts;
-// only super admins see events and manage email alert recipients. Unknown roles
-// are treated as watchers (least privilege).
+// only super admins see events, manage email alert recipients, and requeue
+// failed jobs. Unknown roles are treated as watchers (least privilege).
 func (s *Server) authorized(u *domain.User, method, path string) bool {
 	if u.Role == domain.RoleSuperAdmin {
 		return true
@@ -129,8 +131,8 @@ func (s *Server) authorized(u *domain.User, method, path string) bool {
 			return u.Role == domain.RoleProcessor || u.Role == domain.RoleAdmin
 		}
 		return true
-	case path == "/api/events" || strings.HasPrefix(path, "/api/recipients"):
-		// Events and email-recipient management are super-admin only.
+	case path == "/api/events" || strings.HasPrefix(path, "/api/recipients") || strings.HasPrefix(path, "/api/jobs"):
+		// Events, email-recipient management, and job requeue are super-admin only.
 		return false
 	default:
 		// submissions, entries, headers, artifacts, verify: admin only.
