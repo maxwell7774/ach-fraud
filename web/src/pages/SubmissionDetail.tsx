@@ -1,7 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
-import { useParams, A, useAction } from "@solidjs/router";
-import { createAsync } from "@solidjs/router";
-import { submissionQuery, verifyQuery, requeueJobAction } from "../queries";
+import { useParams, A, useAction, createAsync } from "@solidjs/router";
+import { submissionQuery, verifyQuery, requeueJobAction, usePolling } from "../queries";
 import { api, dollars, fmtDateTime, type Job } from "../api";
 import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination } from "../components";
 import { ArrowLeftIcon } from "../icons";
@@ -10,6 +9,7 @@ import { useConfirm } from "../confirm";
 import { isSuperAdmin } from "../user";
 
 export default function SubmissionDetail() {
+  usePolling("submission");
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();

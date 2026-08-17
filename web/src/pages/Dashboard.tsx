@@ -1,13 +1,14 @@
 import { For, Show } from "solid-js";
 import { A } from "@solidjs/router";
 import { createAsync } from "@solidjs/router";
-import { dashboardQuery } from "../queries";
+import { dashboardQuery, usePolling } from "../queries";
 import { api, dollars, fmtDate } from "../api";
 import { Cards, HoldTable, Loading } from "../components";
 
 const firstLine = (s: string) => s.split("\n")[0];
 
 export default function Dashboard() {
+  usePolling("dashboard");
   const data = createAsync(() => dashboardQuery());
   return (
     <Show when={data()} fallback={<Loading label="Loading dashboard…" />}>

@@ -6,7 +6,7 @@ import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Load
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
-import { approveHoldAction, declineHoldAction, bulkHoldAction, dashboardQuery, holdsQuery } from "../queries";
+import { approveHoldAction, declineHoldAction, bulkHoldAction, dashboardQuery, holdsQuery, usePolling } from "../queries";
 
 const STATUSES = ["", "pending", "approved", "declined", "auto_declined"];
 
@@ -15,6 +15,7 @@ function groupKey(h: Hold): string {
 }
 
 export default function Holds() {
+  usePolling("dashboard", "holds");
   const [params, setParams] = useSearchParams();
   // No status in the URL defaults to the pending view; the "All" tab is the
   // explicit `status=all`.

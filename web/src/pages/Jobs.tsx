@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { createAsync, useAction } from "@solidjs/router";
-import { jobsQuery, requeueJobAction } from "../queries";
+import { jobsQuery, requeueJobAction, usePolling } from "../queries";
 import { api, fmtDateTime, human, type Job } from "../api";
 import { EmptyState, Loading, Select } from "../components";
 import { useFlash } from "../flash";
@@ -14,6 +14,7 @@ const STATES = [
 ];
 
 export default function Jobs() {
+  usePolling("jobs");
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();
   const requeue = useAction(requeueJobAction);

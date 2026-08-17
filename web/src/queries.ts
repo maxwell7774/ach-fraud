@@ -1,4 +1,5 @@
-import { query, action } from "@solidjs/router";
+import { query, action, revalidate } from "@solidjs/router";
+import { createEffect, onCleanup } from "solid-js";
 import { api, type ListParams, type RecipientInput } from "./api";
 
 // Reads. Queries are keyed by name + arguments, so sharing (e.g. the dashboard
@@ -97,3 +98,15 @@ export const requeueJobAction = action(async (args: { id: string }) => {
     return { ok: false as const, error: String(e) };
   }
 }, "requeueJob");
+
+// usePolling sets up a 30-second poll for the given query keys. The interval is
+// cleared automatically when the component unmounts.
+const POLL_MS = 30_000;
+export function usePolling(...keys: string[]) {
+  createEffect(() => {
+    const interval = setInterval(() => {
+      for (const k of keys) revalidate(k);
+    }, POLL_MS);
+    onCleanup(() => clearInterval(interval));
+  });
+}
