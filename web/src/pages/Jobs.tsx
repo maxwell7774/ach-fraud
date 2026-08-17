@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { createAsync, useAction } from "@solidjs/router";
 import { jobsQuery, requeueJobAction, usePolling } from "../queries";
 import { api, fmtDateTime, human, type Job } from "../api";
-import { EmptyState, Loading, Select } from "../components";
+import { EmptyState, Loading, Select, PageHeader } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 
@@ -14,7 +14,7 @@ const STATES = [
 ];
 
 export default function Jobs() {
-  usePolling("jobs");
+  const { remaining } = usePolling("jobs");
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();
   const requeue = useAction(requeueJobAction);
@@ -36,7 +36,9 @@ export default function Jobs() {
 
   return (
     <>
-      <h1>Jobs</h1>
+      <PageHeader remaining={remaining}>
+        <h1>Jobs</h1>
+      </PageHeader>
       <p class="section-note">
         The pipeline outbox. Failed jobs are retried after a code fix or a transient
         error by requeueing them — the next run picks them up again.

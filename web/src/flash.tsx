@@ -18,17 +18,17 @@ export function FlashProvider(props: ParentProps): JSX.Element {
 
   return (
     <FlashCtx.Provider value={{ show }}>
+      {props.children}
       <Show when={flash()}>
         {(f) => (
-          <div class={`flash flash-${f().type}`}>
+          <div class={`toast toast-${f().type}`} role="status" aria-live="polite">
             <span>{f().msg}</span>
-            <button class="flash-close" onClick={() => setFlash(null)} aria-label="Dismiss">
+            <button class="toast-close" onClick={() => setFlash(null)} aria-label="Dismiss">
               <XIcon />
             </button>
           </div>
         )}
       </Show>
-      {props.children}
     </FlashCtx.Provider>
   );
 }

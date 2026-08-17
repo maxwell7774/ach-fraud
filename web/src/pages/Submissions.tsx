@@ -1,13 +1,14 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { useSearchParams, A } from "@solidjs/router";
 import { createAsync } from "@solidjs/router";
-import { submissionsQuery } from "../queries";
+import { submissionsQuery, usePolling } from "../queries";
 import { api, fmtDateTime } from "../api";
-import { Badge, EmptyState, Loading, Pagination, SortableTh, DatePicker } from "../components";
+import { Badge, EmptyState, Loading, Pagination, SortableTh, DatePicker, PageHeader } from "../components";
 
 const STATUSES = ["", "received", "ready", "archived", "failed"];
 
 export default function Submissions() {
+  const { remaining } = usePolling("submissions");
   const [params, setParams] = useSearchParams();
   const status = () => {
     const s = params.status;
@@ -50,7 +51,9 @@ export default function Submissions() {
 
   return (
     <>
-      <h1>Files</h1>
+      <PageHeader remaining={remaining}>
+        <h1>Files</h1>
+      </PageHeader>
       <div class="dir-tabs">
         <For each={STATUSES}>
           {(s) => (

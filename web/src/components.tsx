@@ -543,3 +543,21 @@ export function HoldTable(props: { holds: Hold[] }) {
     </div>
   );
 }
+
+export function PollIndicator(props: { remaining: () => number }) {
+  const label = () => {
+    const r = props.remaining();
+    if (r <= 1) return "Refreshing…";
+    return `Refreshes in ${r}s`;
+  };
+  return <span class="poll-indicator">{label()}</span>;
+}
+
+export function PageHeader(props: { children: any; remaining: () => number }) {
+  return (
+    <div class="page-header">
+      {props.children}
+      <PollIndicator remaining={props.remaining} />
+    </div>
+  );
+}

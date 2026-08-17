@@ -7,25 +7,30 @@ export type ConfirmTone = "approve" | "decline";
 export type ConfirmOptions = {
   title?: string;
   tone?: ConfirmTone;
+  confirmLabel?: string;
+  showNote?: boolean;
 };
 
-type ConfirmState = { msg: string; opts: ConfirmOptions; resolve: (ok: boolean) => void };
+export type ConfirmResult = { ok: boolean; note: string };
 
-const ConfirmCtx = createContext<{ confirm: (msg: string, opts?: ConfirmOptions) => Promise<boolean> }>();
+type ConfirmState = { msg: string; opts: ConfirmOptions; resolve: (r: ConfirmResult) => void };
+
+const ConfirmCtx = createContext<{ confirm: (msg: string, opts?: ConfirmOptions) => Promise<ConfirmResult> }>();
 
 export function ConfirmProvider(props: ParentProps): JSX.Element {
   const [state, setState] = createSignal<ConfirmState | null>(null);
+  const [note, setNote] = createSignal("");
   let dlg: HTMLDialogElement | undefined;
 
-  function confirm(msg: string, opts: ConfirmOptions = {}): Promise<boolean> {
+  function confirm(msg: string, opts: ConfirmOptions = {}): Promise<ConfirmResult> {
     return new Promise((resolve) => {
+      setNote("");
       setState({ msg, opts, resolve });
-      // showModal after the freshly-mounted dialog exists.
       queueMicrotask(() => dlg?.showModal());
     });
   }
   function done(ok: boolean) {
-    state()?.resolve(ok);
+    state()?.resolve({ ok, note: note() });
     setState(null);
     dlg?.close();
   }
@@ -46,6 +51,19 @@ export function ConfirmProvider(props: ParentProps): JSX.Element {
               <span class="confirm-title">{s().opts.title ?? "Please confirm"}</span>
             </div>
             <p>{s().msg}</p>
+            <Show when={s().opts.showNote}>
+              <div class="confirm-note">
+                <label>
+                  Note <span class="muted">(optional)</span>
+                  <input
+                    type="text"
+                    placeholder="Add a note…"
+                    value={note()}
+                    onInput={(e) => setNote(e.currentTarget.value)}
+                  />
+                </label>
+              </div>
+            </Show>
             <div class="dialog-actions">
               <button class="btn btn-outline" onClick={() => done(false)}>
                 Cancel
@@ -54,7 +72,7 @@ export function ConfirmProvider(props: ParentProps): JSX.Element {
                 class={`btn ${s().opts.tone === "decline" ? "btn-decline" : "btn-approve"}`}
                 onClick={() => done(true)}
               >
-                Confirm
+                {s().opts.confirmLabel ?? "Confirm"}
               </button>
             </div>
           </dialog>

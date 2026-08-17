@@ -3,18 +3,20 @@ import { A } from "@solidjs/router";
 import { createAsync } from "@solidjs/router";
 import { dashboardQuery, usePolling } from "../queries";
 import { api, dollars, fmtDate } from "../api";
-import { Cards, HoldTable, Loading } from "../components";
+import { Cards, HoldTable, Loading, PageHeader } from "../components";
 
 const firstLine = (s: string) => s.split("\n")[0];
 
 export default function Dashboard() {
-  usePolling("dashboard");
+  const { remaining } = usePolling("dashboard");
   const data = createAsync(() => dashboardQuery());
   return (
     <Show when={data()} fallback={<Loading label="Loading dashboard…" />}>
       {(d) => (
         <>
-          <h1>Dashboard</h1>
+          <PageHeader remaining={remaining}>
+            <h1>Dashboard</h1>
+          </PageHeader>
           <Cards counts={d().hold_counts} />
 
           <Show when={d().failed_submissions.length > 0 || d().failed_jobs.length > 0}>

@@ -1,8 +1,9 @@
-import { createSignal, For, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { createAsync, useParams, useAction, useSubmission, A } from "@solidjs/router";
 import { dollars, fmtDateTime, fmtDate, releaseStateLabel } from "../api";
 import { Badge, Loading } from "../components";
 import { useFlash } from "../flash";
+import { useConfirm } from "../confirm";
 import { canReview } from "../user";
 import { approveHoldAction, declineHoldAction, holdQuery } from "../queries";
 import { ArrowLeftIcon, CheckIcon, XIcon } from "../icons";
@@ -10,23 +11,43 @@ import { ArrowLeftIcon, CheckIcon, XIcon } from "../icons";
 export default function HoldDetail() {
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
+  const { confirm } = useConfirm();
   const hold = createAsync(() => holdQuery(params.id));
   const approve = useAction(approveHoldAction);
   const decline = useAction(declineHoldAction);
   const approveSub = useSubmission(approveHoldAction);
   const declineSub = useSubmission(declineHoldAction);
   const busy = () => approveSub.pending || declineSub.pending;
-  const [note, setNote] = createSignal("");
 
   async function act(action: "approve" | "decline") {
+    const h = hold();
+    if (!h) return;
+    const lines = [
+      `Account: ${h.entry_receiver_account}`,
+      h.entry_receiver_name ? `Name: ${h.entry_receiver_name}` : null,
+      `Amount: ${dollars(h.entry_amount)}`,
+      `RDFI: ${h.entry_rdfi}`,
+      h.customer_id ? `Customer: ${h.customer_id}` : null,
+      h.reason ? `Reason held: ${h.reason}` : null,
+    ].filter(Boolean);
+    if (h.group_size > 1) {
+      lines.push(`\nPart of velocity group of ${h.group_size} — decision applies to all.`);
+    }
+    const msg = `${action === "approve" ? "Approve" : "Decline"} this hold?\n\n${lines.join("\n")}`;
+    const res = await confirm(msg, {
+      title: `${action === "approve" ? "Approve" : "Decline"} hold`,
+      tone: action,
+      confirmLabel: action === "approve" ? "Approve" : "Decline",
+      showNote: true,
+    });
+    if (!res.ok) return;
     const submit = action === "approve" ? approve : decline;
-    const res = await submit({ id: params.id, note: note() });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed");
+    const result = await submit({ id: params.id, note: res.note });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed");
       return;
     }
-    flash("success", action === "approve" ? "Approved" : "Declined");
-    setNote("");
+    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${dollars(h.entry_amount)} to ${h.entry_receiver_account}`);
   }
 
   return (
@@ -107,34 +128,13 @@ export default function HoldDetail() {
                   declining it applies to the whole group.
                 </p>
               </Show>
-              <div class="search-bar">
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    act("approve");
-                  }}
-                >
-                  <label>
-                    Note{" "}
-                    <input
-                      type="text"
-                      value={note()}
-                      placeholder="Optional note"
-                      onInput={(e) => setNote(e.currentTarget.value)}
-                    />
-                  </label>
-                  <button class="btn btn-approve" type="submit" disabled={busy()}>
-                    <CheckIcon /> Approve
-                  </button>
-                  <button
-                    class="btn btn-decline"
-                    type="button"
-                    disabled={busy()}
-                    onClick={() => act("decline")}
-                  >
-                    <XIcon /> Decline
-                  </button>
-                </form>
+              <div class="btn-group">
+                <button class="btn btn-approve" type="button" disabled={busy()} onClick={() => act("approve")}>
+                  <CheckIcon /> Approve
+                </button>
+                <button class="btn btn-decline" type="button" disabled={busy()} onClick={() => act("decline")}>
+                  <XIcon /> Decline
+                </button>
               </div>
             </div>
           </Show>

@@ -2,14 +2,14 @@ import { createSignal, For, Show } from "solid-js";
 import { useParams, A, useAction, createAsync } from "@solidjs/router";
 import { submissionQuery, verifyQuery, requeueJobAction, usePolling } from "../queries";
 import { api, dollars, fmtDateTime, type Job } from "../api";
-import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination } from "../components";
+import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination, PageHeader } from "../components";
 import { ArrowLeftIcon } from "../icons";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { isSuperAdmin } from "../user";
 
 export default function SubmissionDetail() {
-  usePolling("submission");
+  const { remaining } = usePolling("submission");
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();
@@ -54,9 +54,11 @@ export default function SubmissionDetail() {
           <A class="back-link" href="/submissions">
             <ArrowLeftIcon /> Files
           </A>
-          <h1>
-            {s().filename} <Badge status={s().status} />
-          </h1>
+          <PageHeader remaining={remaining}>
+            <h1>
+              {s().filename} <Badge status={s().status} />
+            </h1>
+          </PageHeader>
 
           <div class="detail-card">
             <h2>Submission</h2>

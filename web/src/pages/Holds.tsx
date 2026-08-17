@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { createAsync, useSearchParams, useAction, useSubmission, A } from "@solidjs/router";
 import { dollars, fmtDate, human } from "../api";
 import type { Hold } from "../api";
-import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading } from "../components";
+import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading, PageHeader } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
@@ -15,7 +15,7 @@ function groupKey(h: Hold): string {
 }
 
 export default function Holds() {
-  usePolling("dashboard", "holds");
+  const { remaining } = usePolling("dashboard", "holds");
   const [params, setParams] = useSearchParams();
   // No status in the URL defaults to the pending view; the "All" tab is the
   // explicit `status=all`.
@@ -133,46 +133,66 @@ export default function Holds() {
   }
 
   async function actOne(h: Hold, action: "approve" | "decline") {
-    const msg = `Confirm ${action} of hold ${h.id.slice(0, 8)}…?${groupWarning(h, action)}`;
-    if (
-      !(await confirm(msg, {
-        title: `${action === "approve" ? "Approve" : "Decline"} hold`,
-        tone: action,
-      }))
-    )
-      return;
+    const lines = [
+      `Account: ${h.entry_receiver_account}`,
+      h.entry_receiver_name ? `Name: ${h.entry_receiver_name}` : null,
+      `Amount: ${dollars(h.entry_amount)}`,
+      `RDFI: ${h.entry_rdfi}`,
+      h.customer_id ? `Customer: ${h.customer_id}` : null,
+      h.reason ? `Reason held: ${h.reason}` : null,
+    ].filter(Boolean);
+    const msg = `${action === "approve" ? "Approve" : "Decline"} this hold?\n\n${lines.join("\n")}${groupWarning(h, action)}`;
+    const res = await confirm(msg, {
+      title: `${action === "approve" ? "Approve" : "Decline"} hold`,
+      tone: action,
+      confirmLabel: action === "approve" ? "Approve" : "Decline",
+      showNote: true,
+    });
+    if (!res.ok) return;
     const submit = action === "approve" ? approve : decline;
-    const res = await submit({ id: h.id, note: "" });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed");
+    const result = await submit({ id: h.id, note: res.note });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed");
       return;
     }
-    flash("success", `${action}d ${h.id.slice(0, 8)}…`);
+    const members = rows().filter((r) => groupKey(r) === groupKey(h));
+    const decided = members.length > 1 ? members : [h];
+    const total = decided.reduce((sum, m) => sum + m.entry_amount, 0);
+    const holdLines = decided.map(
+      (m) => `${dollars(m.entry_amount)} to ${m.entry_receiver_account}`
+    );
+    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${decided.length} hold${decided.length > 1 ? "s" : ""} (${dollars(total)})\n${holdLines.join("\n")}`);
     setSelected(new Set<string>());
   }
 
   async function actBulk(action: "approve" | "decline") {
     const ids = [...selected()];
     if (ids.length === 0) return;
-    if (
-      !(await confirm(`Confirm ${action} of ${ids.length} selected holds?`, {
-        title: `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds`,
-        tone: action,
-      }))
-    )
-      return;
-    const res = await bulk({ action, ids });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed");
+    const selectedHolds = rows().filter((h) => selected().has(h.id));
+    const total = selectedHolds.reduce((sum, h) => sum + h.entry_amount, 0);
+    const accounts = [...new Set(selectedHolds.map((h) => h.entry_receiver_account))];
+    const msg = `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds totaling ${dollars(total)}?\n\nAccounts: ${accounts.join(", ")}`;
+    const res = await confirm(msg, {
+      title: `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds`,
+      tone: action,
+      confirmLabel: action === "approve" ? "Approve" : "Decline",
+      showNote: true,
+    });
+    if (!res.ok) return;
+    const result = await bulk({ action, ids });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed");
       return;
     }
-    flash("success", `${res.count} ${action}d`);
+    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${result.count} holds (${dollars(total)})`);
     setSelected(new Set<string>());
   }
 
   return (
     <>
-      <h1>Holds</h1>
+      <PageHeader remaining={remaining}>
+        <h1>Holds</h1>
+      </PageHeader>
 
       <div class="dir-tabs">
         <For each={STATUSES}>
