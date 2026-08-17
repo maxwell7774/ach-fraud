@@ -135,6 +135,75 @@ func TestRebuildToleratesExtraAddenda(t *testing.T) {
 	}
 }
 
+// TestRebuildToleratesBadCompanyDescription: the batch header's company
+// description may be all zeros ("000"), which passes the lenient read but would
+// fail the rebuilt batch's Create() because Header.Validate() checks it
+// directly. Rebuild must carry the lenient opts so the fixed file round-trips.
+func TestRebuildToleratesBadCompanyDescription(t *testing.T) {
+	file := ach.NewFile()
+	hdr := ach.NewFileHeader()
+	hdr.ImmediateDestination = "121042882"
+	hdr.ImmediateOrigin = "231380104"
+	hdr.ImmediateDestinationName = "My Bank"
+	hdr.ImmediateOriginName = "My Bank"
+	hdr.FileCreationDate = "260101"
+	file.SetHeader(hdr)
+
+	bh := ach.NewBatchHeader()
+	bh.ServiceClassCode = ach.CreditsOnly
+	bh.CompanyName = "Acme Corp"
+	bh.CompanyIdentification = "12104288"
+	bh.StandardEntryClassCode = ach.PPD
+	bh.CompanyEntryDescription = "000"
+	bh.ODFIIdentification = "12104288"
+	bh.EffectiveEntryDate = "260101"
+
+	ed := ach.NewEntryDetail()
+	ed.TransactionCode = ach.CheckingCredit
+	ed.RDFIIdentification = "23138010"
+	ed.CheckDigit = "4"
+	ed.DFIAccountNumber = "111111"
+	ed.Amount = 5000
+	ed.IndividualName = "A"
+	ed.SetTraceNumber("12104288", 1)
+
+	batch, err := ach.NewBatch(bh)
+	if err != nil {
+		t.Fatalf("creating batch: %v", err)
+	}
+	batch.SetValidation(&ach.ValidateOpts{SkipBatchHeaderCompanyValidation: true})
+	batch.AddEntry(ed)
+	if err := batch.Create(); err != nil {
+		t.Fatalf("building batch: %v", err)
+	}
+	file.AddBatch(batch)
+	if err := file.Create(); err != nil {
+		t.Fatalf("building file: %v", err)
+	}
+
+	var buf strings.Builder
+	w := ach.NewWriter(&buf)
+	if err := w.Write(file); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	parsed := read(t, []byte(buf.String()))
+	if got := parsed.Batches[0].GetHeader().CompanyEntryDescription; got != "000" {
+		t.Fatalf("description = %q, want 000", got)
+	}
+
+	fixed, err := Rebuild(parsed)
+	if err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if TotalEntries(fixed) != 1 {
+		t.Fatalf("expected 1 entry, got %d", TotalEntries(fixed))
+	}
+}
+
 func TestVerifySame(t *testing.T) {
 	a := read(t, mustCredit(t, []testutil.Entry{{Account: "111111", Name: "A", Amount: 5000, RDFI: "231380104"}}))
 	b := read(t, mustCredit(t, []testutil.Entry{{Account: "111111", Name: "A", Amount: 5000, RDFI: "231380104"}}))

@@ -17,11 +17,17 @@ import (
 )
 
 // Read parses ACH bytes. When lenient is true, batch-level validation is
-// skipped so files with bad control totals can be read and repaired.
+// skipped so files with bad control totals can be read and repaired. Company
+// field checks in the batch header are skipped too, since the rebuild path
+// runs Header.Validate() directly and those checks are gated on
+// SkipBatchHeaderCompanyValidation rather than BypassBatchValidation.
 func Read(data []byte, lenient bool) (*ach.File, error) {
 	reader := ach.NewReader(bytes.NewReader(data))
 	if lenient {
-		reader.SetValidation(&ach.ValidateOpts{BypassBatchValidation: true})
+		reader.SetValidation(&ach.ValidateOpts{
+			BypassBatchValidation:            true,
+			SkipBatchHeaderCompanyValidation: true,
+		})
 	}
 	file, err := reader.Read()
 	if err != nil {
