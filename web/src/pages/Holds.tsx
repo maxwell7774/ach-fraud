@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync, useSearchParams, useAction, useSubmission, A } from "@solidjs/router";
-import { dollars, fmtDate, human } from "../api";
-import type { Hold } from "../api";
-import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading, PageHeader } from "../components";
+import { createAsync, useSearchParams, useAction, useSubmission, A, revalidate } from "@solidjs/router";
+import { api, dollars, fmtDate, human } from "../api";
+import type { Hold, HoldDetail } from "../api";
+import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading, PageHeader, QueryError } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
@@ -36,6 +36,7 @@ export default function Holds() {
   const [pageSize, setPageSize] = createSignal(25);
   const [sort, setSort] = createSignal("");
   const [dir, setDir] = createSignal("");
+  const [queryError, setQueryError] = createSignal<unknown>();
   const [selected, setSelected] = createSignal<Set<string>>(new Set<string>());
   const dash = createAsync(() => dashboardQuery());
 
@@ -55,7 +56,7 @@ export default function Holds() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const data = createAsync(() => holdsQuery(key()));
+  const data = createAsync(() => { setQueryError(undefined); return holdsQuery(key()).catch((e) => { setQueryError(e); return undefined; }); });
 
   const rows = () => data()?.holds ?? [];
   const ids = () => rows().map((h) => h.id);
@@ -83,6 +84,7 @@ export default function Holds() {
   function applyFilters() {
     setQ(search());
     setPage(1);
+    setSelected(new Set<string>());
   }
   function clearFilters() {
     setSearch("");
@@ -98,10 +100,12 @@ export default function Holds() {
     setSort(col);
     setDir(d);
     setPage(1);
+    setSelected(new Set<string>());
   }
   function onPage(p: number, s: number) {
     setPage(p);
     setPageSize(s);
+    setSelected(new Set<string>());
   }
   function toggle(id: string, checked: boolean) {
     const s = new Set(selected());
@@ -117,22 +121,16 @@ export default function Holds() {
   }
   const allChecked = () => ids().length > 0 && ids().every((id) => selected().has(id));
 
-  // groupWarning builds the confirm-dialog warning for holds in a velocity
-  // group, listing every member that will be decided together.
-  function groupWarning(h: Hold, action: "approve" | "decline"): string {
-    const members = rows().filter((r) => groupKey(r) === groupKey(h));
-    if (members.length <= 1) return "";
-    const lines = members.map(
-      (m) => `• ${dollars(m.entry_amount)} to ${m.entry_receiver_account}${m.entry_receiver_name ? ` (${m.entry_receiver_name})` : ""}`
-    );
-    return (
-      `\n\nThis hold is part of a velocity group of ${members.length}. ` +
-      `The ${action === "approve" ? "approval" : "decline"} applies to every hold in the group:\n` +
-      lines.join("\n")
-    );
-  }
-
   async function actOne(h: Hold, action: "approve" | "decline") {
+    // The list endpoint is paginated and does not include group members. The
+    // detail response is the authoritative source for the group size.
+    let detail: HoldDetail = h as HoldDetail;
+    try {
+      detail = await api.hold(h.id);
+    } catch (e) {
+      flash("error", `Could not refresh this hold: ${String(e)}`);
+      return;
+    }
     const lines = [
       `Account: ${h.entry_receiver_account}`,
       h.entry_receiver_name ? `Name: ${h.entry_receiver_name}` : null,
@@ -141,7 +139,17 @@ export default function Holds() {
       h.customer_id ? `Customer: ${h.customer_id}` : null,
       h.reason ? `Reason held: ${h.reason}` : null,
     ].filter(Boolean);
-    const msg = `${action === "approve" ? "Approve" : "Decline"} this hold?\n\n${lines.join("\n")}${groupWarning(h, action)}`;
+    const groupMembers = detail.group_holds ?? [];
+    const visibleMembers = rows().filter((r) => groupKey(r) === groupKey(h));
+    const unseen = Math.max(0, detail.group_size - visibleMembers.length);
+    const groupNote = detail.group_size > 1
+      ? `\n\nThis hold is part of a velocity group of ${detail.group_size}. The ${action === "approve" ? "approval" : "decline"} applies to every hold in the group.` +
+        (unseen > 0 ? ` ${unseen} group member${unseen === 1 ? " is" : "s are"} not on this page.` : "") +
+        (groupMembers.length > 0
+          ? `\n${groupMembers.map((m) => `• ${dollars(m.entry_amount)} to ${m.entry_receiver_account}${m.entry_receiver_name ? ` (${m.entry_receiver_name})` : ""}`).join("\n")}`
+          : "")
+      : "";
+    const msg = `${action === "approve" ? "Approve" : "Decline"} this hold?\n\n${lines.join("\n")}${groupNote}`;
     const res = await confirm(msg, {
       title: `${action === "approve" ? "Approve" : "Decline"} hold`,
       tone: action,
@@ -155,13 +163,10 @@ export default function Holds() {
       flash("error", result.error ?? "failed");
       return;
     }
-    const members = rows().filter((r) => groupKey(r) === groupKey(h));
-    const decided = members.length > 1 ? members : [h];
+    const decided = detail.group_size > 1 ? groupMembers : [h];
     const total = decided.reduce((sum, m) => sum + m.entry_amount, 0);
-    const holdLines = decided.map(
-      (m) => `${dollars(m.entry_amount)} to ${m.entry_receiver_account}`
-    );
-    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${decided.length} hold${decided.length > 1 ? "s" : ""} (${dollars(total)})\n${holdLines.join("\n")}`);
+    const holdLines = decided.map((m) => `${dollars(m.entry_amount)} to ${m.entry_receiver_account}`);
+    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${decided.length} hold${decided.length === 1 ? "" : "s"} (${dollars(total)})\n${holdLines.join("\n")}`);
     setSelected(new Set<string>());
   }
 
@@ -169,9 +174,8 @@ export default function Holds() {
     const ids = [...selected()];
     if (ids.length === 0) return;
     const selectedHolds = rows().filter((h) => selected().has(h.id));
-    const total = selectedHolds.reduce((sum, h) => sum + h.entry_amount, 0);
     const accounts = [...new Set(selectedHolds.map((h) => h.entry_receiver_account))];
-    const msg = `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds totaling ${dollars(total)}?\n\nAccounts: ${accounts.join(", ")}`;
+    const msg = `${action === "approve" ? "Approve" : "Decline"} the ${ids.length} selected holds?\n\nEach selected hold may decide its entire velocity group, including holds on other pages.\nAccounts: ${accounts.join(", ")}`;
     const res = await confirm(msg, {
       title: `${action === "approve" ? "Approve" : "Decline"} ${ids.length} holds`,
       tone: action,
@@ -179,12 +183,12 @@ export default function Holds() {
       showNote: true,
     });
     if (!res.ok) return;
-    const result = await bulk({ action, ids });
+    const result = await bulk({ action, ids, note: res.note });
     if (!result.ok) {
       flash("error", result.error ?? "failed");
       return;
     }
-    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${result.count} holds (${dollars(total)})`);
+    flash("success", `${action === "approve" ? "Approved" : "Declined"} ${result.count} hold${result.count === 1 ? "" : "s"} (including any linked velocity-group members)`);
     setSelected(new Set<string>());
   }
 
@@ -239,7 +243,7 @@ export default function Holds() {
         </form>
       </div>
 
-      <Show when={data()} fallback={<Loading label="Loading holds…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading holds…" />}><QueryError error={queryError()} onRetry={() => revalidate("holds")} /></Show>}>
         <div class="table-wrap">
           <Show when={rows().length === 0}>
             <EmptyState
@@ -286,6 +290,7 @@ export default function Holds() {
                     <input
                       type="checkbox"
                       id="selAll"
+                      aria-label="Select all holds on this page"
                       checked={allChecked()}
                       onChange={(e) => toggleAll(e.currentTarget.checked)}
                     />
@@ -324,6 +329,7 @@ export default function Holds() {
                         <input
                           type="checkbox"
                           name="id"
+                          aria-label={`Select hold for ${h.entry_receiver_account}`}
                           checked={selected().has(h.id)}
                           onChange={(e) => toggle(h.id, e.currentTarget.checked)}
                         />
@@ -339,9 +345,9 @@ export default function Holds() {
                       <Show when={groupCounts().get(groupKey(h))! > 1}>
                         <span
                           class="badge badge-group"
-                          title="Same-day velocity group: these hold together, and are released together once approved"
+                          title="These holds share a velocity group; more members may be on another page"
                         >
-                          {groupCounts().get(groupKey(h))} in group
+                          {groupCounts().get(groupKey(h))} on page
                         </span>
                       </Show>
                     </td>

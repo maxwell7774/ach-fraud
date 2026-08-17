@@ -42,6 +42,10 @@ export function ConfirmProvider(props: ParentProps): JSX.Element {
           <dialog
             id="confirmDlg"
             ref={dlg}
+            onCancel={(e) => {
+              e.preventDefault();
+              done(false);
+            }}
             class={s().opts.tone === "decline" ? "confirm-decline" : "confirm-approve"}
           >
             <div class="confirm-head">

@@ -20,6 +20,7 @@ type holdDetail struct {
 	Velocity     *velocityInfo   `json:"velocity,omitempty"`
 	ReleaseState string          `json:"release_state"`
 	GroupSize    int             `json:"group_size"`
+	GroupHolds   []domain.Hold   `json:"group_holds,omitempty"`
 }
 
 type velocityInfo struct {
@@ -77,6 +78,14 @@ func (s *Server) handleBulk(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("no holds selected"))
 		return
 	}
+	if len(req.IDs) > 100 {
+		writeErr(w, http.StatusBadRequest, errors.New("at most 100 holds may be selected"))
+		return
+	}
+	if len(req.Note) > 2000 {
+		writeErr(w, http.StatusBadRequest, errors.New("note is too long"))
+		return
+	}
 	actor := s.reviewActor(r, req.Actor)
 	var count int
 	var err error
@@ -126,6 +135,7 @@ func (s *Server) handleGetHold(w http.ResponseWriter, r *http.Request) {
 	if h.ReleaseArtifactID != nil {
 		if members, err := s.deps.Store.ListHoldsByReleaseArtifact(ctx, *h.ReleaseArtifactID); err == nil && len(members) > 1 {
 			detail.GroupSize = len(members)
+			detail.GroupHolds = members
 		}
 	}
 	writeJSON(w, http.StatusOK, detail)
@@ -246,6 +256,9 @@ func decodeReview(r *http.Request) (reviewRequest, error) {
 	var req reviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return req, err
+	}
+	if len(req.Note) > 2000 || len(req.Actor) > 200 {
+		return req, errors.New("review field is too long")
 	}
 	return req, nil
 }

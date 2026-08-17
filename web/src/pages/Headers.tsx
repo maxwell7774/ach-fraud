@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync } from "@solidjs/router";
+import { createAsync, revalidate } from "@solidjs/router";
 import { headersQuery } from "../queries";
 import { api, fmtDate } from "../api";
-import { EmptyState, Loading, Pagination, SortableTh, DatePicker } from "../components";
+import { EmptyState, Loading, Pagination, SortableTh, DatePicker, QueryError } from "../components";
 
 export default function Headers() {
   const [search, setSearch] = createSignal("");
@@ -13,6 +13,7 @@ export default function Headers() {
   const [pageSize, setPageSize] = createSignal(25);
   const [sort, setSort] = createSignal("");
   const [dir, setDir] = createSignal("");
+  const [queryError, setQueryError] = createSignal<unknown>();
 
   const key = createMemo(() => ({
     q: q() || undefined,
@@ -23,7 +24,7 @@ export default function Headers() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const data = createAsync(() => headersQuery(key()));
+  const data = createAsync(() => { setQueryError(undefined); return headersQuery(key()).catch((e) => { setQueryError(e); return undefined; }); });
 
   function applyFilters() {
     setQ(search());
@@ -64,7 +65,7 @@ export default function Headers() {
           </button>
         </form>
       </div>
-      <Show when={data()} fallback={<Loading label="Loading headers…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading headers…" />}><QueryError error={queryError()} onRetry={() => revalidate("headers")} /></Show>}>
         <div class="table-wrap">
           <Show
             when={data()!.headers.length > 0}

@@ -124,19 +124,25 @@ func (q *Queries) ListRecipients(ctx context.Context) ([]Recipient, error) {
 }
 
 const updateRecipient = `-- name: UpdateRecipient :one
-UPDATE recipients SET name = $1, enabled = $2
-WHERE id = $3
+UPDATE recipients SET email = $1, name = $2, enabled = $3
+ WHERE id = $4
 RETURNING id, email, name, enabled, created_at
 `
 
 type UpdateRecipientParams struct {
+	Email   string
 	Name    string
 	Enabled bool
 	ID      pgtype.UUID
 }
 
 func (q *Queries) UpdateRecipient(ctx context.Context, arg UpdateRecipientParams) (Recipient, error) {
-	row := q.db.QueryRow(ctx, updateRecipient, arg.Name, arg.Enabled, arg.ID)
+	row := q.db.QueryRow(ctx, updateRecipient,
+		arg.Email,
+		arg.Name,
+		arg.Enabled,
+		arg.ID,
+	)
 	var i Recipient
 	err := row.Scan(
 		&i.ID,

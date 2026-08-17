@@ -18,7 +18,8 @@ import (
 
 // Store is an in-memory ports.Store.
 type Store struct {
-	mu sync.Mutex
+	mu          sync.Mutex
+	lifecycleMu sync.Mutex
 
 	subs    map[uuid.UUID]domain.Submission
 	arts    map[uuid.UUID]domain.Artifact
@@ -240,6 +241,14 @@ func (s *Store) WithinTx(ctx context.Context, fn func(tx ports.Store) error) err
 // WithIngestLock serializes the ingest pass across processes in Postgres; in
 // memory it is simply a transactional run with no concurrency to exclude.
 func (s *Store) WithIngestLock(ctx context.Context, fn func(tx ports.Store) error) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return s.runTx(fn)
+}
+
+func (s *Store) WithArtifactLifecycleLock(ctx context.Context, fn func(tx ports.Store) error) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	return s.runTx(fn)
 }
 

@@ -23,12 +23,17 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 		if err := d.Store.EnqueueJob(ctx, domain.JobPublishCleaned, submissionID, d.Clock.Now()); err != nil {
 			return nil, err
 		}
-		if _, rerr := d.Store.GetArtifactBySubmissionKind(ctx, submissionID, domain.ArtifactRelease); rerr == nil {
-			if err := d.Store.EnqueueJob(ctx, domain.JobPublishRelease, submissionID, d.Clock.Now()); err != nil {
+		arts, err := d.Store.ListArtifactsBySubmission(ctx, submissionID)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range arts {
+			if a.Kind != domain.ArtifactRelease {
+				continue
+			}
+			if err := d.Store.EnqueueJob(ctx, domain.JobPublishRelease, a.ID, d.Clock.Now()); err != nil {
 				return nil, err
 			}
-		} else if !errors.Is(rerr, domain.ErrNotFound) {
-			return nil, rerr
 		}
 		return nil, nil
 	} else if !errors.Is(err, domain.ErrNotFound) {
@@ -96,12 +101,10 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 		return nil, err
 	}
 	cleanedSum := checksum.Bytes(cleanedData)
-	if err := d.Files.Put(ctx, cleanedSum, cleanedData); err != nil {
-		return nil, err
-	}
 
 	type builtRelease struct {
 		sum  string
+		data []byte
 		ids  []uuid.UUID
 		held []achp.HeldEntry
 	}
@@ -120,36 +123,40 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 			return nil, err
 		}
 		sum := checksum.Bytes(data)
-		if err := d.Files.Put(ctx, sum, data); err != nil {
-			return nil, err
-		}
 		if err := achp.VerifyRelease(rel, g.held, d.Policy); err != nil {
 			return nil, fmt.Errorf("release balance check failed: %w", err)
 		}
-		releases = append(releases, builtRelease{sum: sum, ids: ids, held: g.held})
-	}
-
-	// Re-read what was actually written and re-verify, so a serialization
-	// round-trip bug cannot slip past with DB rows already committed.
-	cleanedOnDisk, err := readFile(ctx, d.Files, cleanedSum)
-	if err != nil {
-		return nil, err
-	}
-	if err := achp.VerifyConsistency(fixedFile, cleanedOnDisk, nil, held, d.Policy); err != nil {
-		return nil, fmt.Errorf("balance check failed after writing: %w", err)
-	}
-	for _, r := range releases {
-		rel, err := readFile(ctx, d.Files, r.sum)
-		if err != nil {
-			return nil, err
-		}
-		if err := achp.VerifyRelease(rel, r.held, d.Policy); err != nil {
-			return nil, fmt.Errorf("release balance check failed after writing: %w", err)
-		}
+		releases = append(releases, builtRelease{sum: sum, data: data, ids: ids, held: g.held})
 	}
 
 	var relIDs []uuid.UUID
-	if err := d.Store.WithinTx(ctx, func(tx ports.Store) error {
+	if err := d.Store.WithArtifactLifecycleLock(ctx, func(tx ports.Store) error {
+		if err := d.Files.Put(ctx, cleanedSum, cleanedData); err != nil {
+			return err
+		}
+		for _, r := range releases {
+			if err := d.Files.Put(ctx, r.sum, r.data); err != nil {
+				return err
+			}
+		}
+		// Verify bytes while the lifecycle lock prevents prune from removing
+		// them before their artifact rows commit.
+		cleanedOnDisk, err := readFile(ctx, d.Files, cleanedSum)
+		if err != nil {
+			return err
+		}
+		if err := achp.VerifyConsistency(fixedFile, cleanedOnDisk, nil, held, d.Policy); err != nil {
+			return fmt.Errorf("balance check failed after writing: %w", err)
+		}
+		for _, r := range releases {
+			rel, err := readFile(ctx, d.Files, r.sum)
+			if err != nil {
+				return err
+			}
+			if err := achp.VerifyRelease(rel, r.held, d.Policy); err != nil {
+				return fmt.Errorf("release balance check failed after writing: %w", err)
+			}
+		}
 		if _, err := tx.CreateArtifact(ctx, domain.Artifact{
 			SubmissionID: submissionID,
 			Kind:         domain.ArtifactCleaned,

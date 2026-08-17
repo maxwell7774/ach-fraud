@@ -2,6 +2,10 @@ package auth
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -20,13 +24,27 @@ const (
 	testSubject = "00000000-0000-0000-0000-000000000001"
 )
 
-// idToken builds a structurally valid JWT (header.payload.signature). No
-// signature is checked in this flow, so the third segment is a dummy.
+var testPrivateKey = mustTestPrivateKey()
+
+func mustTestPrivateKey() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+// idToken builds a signed RS256 JWT for the test JWKS endpoint.
 func idToken(claims map[string]any) string {
-	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "kid": "test-key"})
 	payload, _ := json.Marshal(claims)
-	return base64.RawURLEncoding.EncodeToString(header) + "." +
-		base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+	part := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	digest := sha256.Sum256([]byte(part))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, testPrivateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		panic(err)
+	}
+	return part + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
 func defaultClaims() map[string]any {
@@ -45,11 +63,20 @@ func providerWithToken(t *testing.T, tok string) *Provider {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/keys" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
+				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "test-key",
+				"n": base64.RawURLEncoding.EncodeToString(testPrivateKey.PublicKey.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
+			}}})
+			return
+		}
 		fmt.Fprintf(w, `{"access_token":"a","token_type":"Bearer","expires_in":3600,"id_token":%q}`, tok)
 	}))
 	t.Cleanup(srv.Close)
 	return &Provider{
-		issuer: testIssuer,
+		issuer:  testIssuer,
+		jwksURL: srv.URL + "/keys",
 		oauth: &oauth2.Config{
 			ClientID:    testClient,
 			RedirectURL: "https://app.example/api/auth/callback",

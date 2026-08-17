@@ -34,9 +34,16 @@ type Server struct {
 }
 
 func New(d pipeline.Deps) *Server {
+	staticDir := "web/dist"
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "web", "dist")
+		if _, err := os.Stat(candidate); err == nil {
+			staticDir = candidate
+		}
+	}
 	return &Server{
 		deps:      d,
-		staticDir: "web/dist",
+		staticDir: staticDir,
 	}
 }
 
@@ -110,6 +117,9 @@ func (s *Server) requireAPI(next http.Handler) http.Handler {
 					return
 				}
 			}
+		}
+		if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		}
 		next.ServeHTTP(w, r)
 	})

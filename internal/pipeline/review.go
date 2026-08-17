@@ -64,11 +64,12 @@ func decide(ctx context.Context, d Deps, holdID uuid.UUID, actor, note string, d
 	var decided []uuid.UUID
 	if err := d.Store.WithinTx(ctx, func(tx ports.Store) error {
 		for _, m := range group {
-			if m.Status != domain.HoldPending && m.Status != domain.HoldAutoDeclined {
-				continue
-			}
-			if err := tx.SetHoldStatus(ctx, m.ID, decision); err != nil {
+			changed, err := tx.SetHoldStatusIfOpen(ctx, m.ID, decision)
+			if err != nil {
 				return err
+			}
+			if !changed {
+				continue
 			}
 			if err := tx.CreateReview(ctx, domain.Review{HoldID: m.ID, Actor: actor, Action: action, Note: note}); err != nil {
 				return err
@@ -78,6 +79,9 @@ func decide(ctx context.Context, d Deps, holdID uuid.UUID, actor, note string, d
 		return nil
 	}); err != nil {
 		return err
+	}
+	if len(decided) == 0 {
+		return fmt.Errorf("%w: hold %s was already reviewed", ErrAlreadyReviewed, holdID)
 	}
 	for _, id := range decided {
 		if err := Emit(ctx, d, ev, &id, nil); err != nil {

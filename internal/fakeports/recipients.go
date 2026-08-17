@@ -45,6 +45,7 @@ func (s *Store) UpdateRecipient(ctx context.Context, r domain.Recipient) (domain
 		return domain.Recipient{}, domain.ErrNotFound
 	}
 	existing.Name = r.Name
+	existing.Email = r.Email
 	existing.Enabled = r.Enabled
 	existing.AlertTypes = r.AlertTypes
 	s.recips[r.ID] = existing

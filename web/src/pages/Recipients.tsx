@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync, useAction } from "@solidjs/router";
+import { createAsync, useAction, revalidate } from "@solidjs/router";
 import { recipientsQuery, createRecipientAction, updateRecipientAction, deleteRecipientAction } from "../queries";
 import type { Recipient } from "../api";
-import { EmptyState, Loading, RowMenu } from "../components";
+import { EmptyState, Loading, RowMenu, QueryError } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 
@@ -23,14 +23,15 @@ export default function Recipients() {
   const create = useAction(createRecipientAction);
   const update = useAction(updateRecipientAction);
   const remove = useAction(deleteRecipientAction);
-  const data = createAsync(() => recipientsQuery());
+  const [queryError, setQueryError] = createSignal<unknown>();
+  const data = createAsync(() => { setQueryError(undefined); return recipientsQuery().catch((e) => { setQueryError(e); return undefined; }); });
 
   const [editing, setEditing] = createSignal<string | null>(null);
   const [form, setForm] = createSignal(blankForm());
 
   function startEdit(r: Recipient) {
     setEditing(r.id);
-    setForm({ email: r.email, name: r.name, enabled: r.enabled, alert_types: [...r.alert_types] });
+    setForm({ email: r.email, name: r.name, enabled: r.enabled, alert_types: [...(r.alert_types ?? [])] });
   }
   function cancelEdit() {
     setEditing(null);
@@ -59,11 +60,11 @@ export default function Recipients() {
   }
 
   async function del(r: Recipient) {
-    if (!(await confirm(`Delete recipient ${r.email}? They will stop receiving email alerts.`, { title: "Delete recipient" })))
-      return;
-    const res = await remove({ id: r.id });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed to delete recipient");
+    const res = await confirm(`Delete recipient ${r.email}? They will stop receiving email alerts.`, { title: "Delete recipient" });
+    if (!res.ok) return;
+    const result = await remove({ id: r.id });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed to delete recipient");
       return;
     }
     flash("success", "Recipient deleted");
@@ -142,7 +143,7 @@ export default function Recipients() {
         </form>
       </div>
 
-      <Show when={data()} fallback={<Loading label="Loading recipients…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading recipients…" />}><QueryError error={queryError()} onRetry={() => revalidate("recipients")} /></Show>}>
         <div class="table-wrap">
           <Show
             when={rows().length > 0}
@@ -170,9 +171,9 @@ export default function Recipients() {
                         </span>
                       </td>
                       <td data-label="Alerts">
-                        <Show when={r.alert_types.length > 0} fallback={<span class="muted">none</span>}>
+                        <Show when={(r.alert_types ?? []).length > 0} fallback={<span class="muted">none</span>}>
                           <span class="alert-badges">
-                            <For each={r.alert_types}>
+                            <For each={r.alert_types ?? []}>
                               {(t) => (
                                 <span class="badge badge-group">
                                   {ALERT_OPTIONS.find((o) => o.value === t)?.label ?? t}

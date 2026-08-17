@@ -44,9 +44,9 @@ export const declineHoldAction = action(async (args: { id: string; note: string 
 }, "declineHold");
 
 export const bulkHoldAction = action(
-  async (args: { action: "approve" | "decline"; ids: string[] }) => {
+  async (args: { action: "approve" | "decline"; ids: string[]; note: string }) => {
     try {
-      const res = await api.bulk(args.action, args.ids, { note: "", actor: "" });
+      const res = await api.bulk(args.action, args.ids, { note: args.note, actor: "" });
       return { ok: true as const, count: res.count };
     } catch (e) {
       return { ok: false as const, error: String(e) };

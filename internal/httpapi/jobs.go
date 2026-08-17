@@ -25,6 +25,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
 		limit = l
 	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	jobs, err := s.deps.Store.ListJobsByState(r.Context(), state, limit)
 	if err != nil {

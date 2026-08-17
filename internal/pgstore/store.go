@@ -71,11 +71,33 @@ func (s *Store) WithIngestLock(ctx context.Context, fn func(tx ports.Store) erro
 	if _, err := s.q.WithTx(tx).AcquireIngestLock(ctx, ingestLockKey); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", artifactLifecycleLockKey); err != nil {
+		return err
+	}
 	if err := fn(&Store{pool: s.pool, q: s.q.WithTx(tx)}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
+
+// WithArtifactLifecycleLock keeps the database lock until the callback's
+// transaction commits. This serializes artifact registration with prune.
+func (s *Store) WithArtifactLifecycleLock(ctx context.Context, fn func(tx ports.Store) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", artifactLifecycleLockKey); err != nil {
+		return err
+	}
+	if err := fn(&Store{pool: s.pool, q: s.q.WithTx(tx)}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+const artifactLifecycleLockKey int64 = 724669124
 
 // translate maps driver errors onto domain errors.
 func translate(err error) error {

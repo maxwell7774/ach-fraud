@@ -1,17 +1,18 @@
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { createAsync } from "@solidjs/router";
+import { createAsync, revalidate } from "@solidjs/router";
 import { dashboardQuery, usePolling } from "../queries";
 import { api, dollars, fmtDate } from "../api";
-import { Cards, HoldTable, Loading, PageHeader } from "../components";
+import { Cards, HoldTable, Loading, PageHeader, QueryError } from "../components";
 
 const firstLine = (s: string) => s.split("\n")[0];
 
 export default function Dashboard() {
   const { remaining } = usePolling("dashboard");
-  const data = createAsync(() => dashboardQuery());
+  const [error, setError] = createSignal<unknown>();
+  const data = createAsync(() => { setError(undefined); return dashboardQuery().catch((e) => { setError(e); return undefined; }); });
   return (
-    <Show when={data()} fallback={<Loading label="Loading dashboard…" />}>
+    <Show when={data()} fallback={<Show when={error()} fallback={<Loading label="Loading dashboard…" />}><QueryError error={error()} onRetry={() => revalidate("dashboard")} /></Show>}>
       {(d) => (
         <>
           <PageHeader remaining={remaining}>

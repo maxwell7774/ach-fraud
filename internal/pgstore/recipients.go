@@ -25,12 +25,16 @@ func (s *Store) ListRecipients(ctx context.Context) ([]domain.Recipient, error) 
 	out := make([]domain.Recipient, 0, len(rows))
 	for _, r := range rows {
 		id := toUUID(r.ID)
+		alertTypes := byRecipient[id]
+		if alertTypes == nil {
+			alertTypes = []string{}
+		}
 		out = append(out, domain.Recipient{
 			ID:         id,
 			Email:      r.Email,
 			Name:       r.Name,
 			Enabled:    r.Enabled,
-			AlertTypes: byRecipient[id],
+			AlertTypes: alertTypes,
 			CreatedAt:  r.CreatedAt.Time,
 		})
 	}
@@ -67,6 +71,7 @@ func (s *Store) UpdateRecipient(ctx context.Context, r domain.Recipient) (domain
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := s.q.WithTx(tx)
 	row, err := q.UpdateRecipient(ctx, UpdateRecipientParams{
+		Email:   r.Email,
 		Name:    r.Name,
 		Enabled: r.Enabled,
 		ID:      toPgUUID(r.ID),

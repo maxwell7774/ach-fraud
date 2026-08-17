@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync, useAction } from "@solidjs/router";
+import { createAsync, useAction, revalidate } from "@solidjs/router";
 import { jobsQuery, requeueJobAction, usePolling } from "../queries";
 import { api, fmtDateTime, human, type Job } from "../api";
-import { EmptyState, Loading, Select, PageHeader } from "../components";
+import { EmptyState, Loading, Select, PageHeader, QueryError } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 
@@ -19,16 +19,17 @@ export default function Jobs() {
   const { confirm } = useConfirm();
   const requeue = useAction(requeueJobAction);
   const [state, setState] = createSignal("failed");
+  const [queryError, setQueryError] = createSignal<unknown>();
 
   const key = createMemo(() => ({ state: state() }));
-  const data = createAsync(() => jobsQuery(key()));
+  const data = createAsync(() => { setQueryError(undefined); return jobsQuery(key()).catch((e) => { setQueryError(e); return undefined; }); });
 
   async function onRequeue(j: Job) {
-    if (!(await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" })))
-      return;
-    const res = await requeue({ id: j.id });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed to requeue job");
+    const res = await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" });
+    if (!res.ok) return;
+    const result = await requeue({ id: j.id });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed to requeue job");
       return;
     }
     flash("success", "Job requeued — the next run will retry it");
@@ -53,7 +54,7 @@ export default function Jobs() {
           />
         </label>
       </div>
-      <Show when={data()} fallback={<Loading label="Loading jobs…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading jobs…" />}><QueryError error={queryError()} onRetry={() => revalidate("jobs")} /></Show>}>
         <div class="table-wrap">
           <Show
             when={data()!.jobs.length > 0}

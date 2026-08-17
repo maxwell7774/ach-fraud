@@ -167,6 +167,12 @@ FROM my_combos mc;
 -- name: SetHoldStatus :exec
 UPDATE holds SET status = $1, updated_at = NOW() WHERE id = $2;
 
+-- name: SetHoldStatusIfOpen :one
+UPDATE holds
+SET status = $1, updated_at = NOW()
+WHERE id = $2 AND status IN ('pending', 'auto_declined')
+RETURNING id;
+
 -- name: SetHoldReleaseArtifact :exec
 UPDATE holds SET release_artifact_id = $1, updated_at = NOW() WHERE id = $2;
 

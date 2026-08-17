@@ -38,6 +38,7 @@ export interface HoldDetail extends Hold {
   velocity?: VelocityInfo;
   release_state: string;
   group_size: number;
+  group_holds?: Hold[];
 }
 
 export interface Submission {
@@ -388,4 +389,9 @@ export function releaseStateLabel(state: string): string {
     default:
       return human(state);
   }
+}
+
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error || "The request failed.");
 }

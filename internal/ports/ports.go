@@ -25,6 +25,9 @@ type Store interface {
 	// lock, serializing the ingest pass across processes so two overlapping
 	// runs cannot both register the same intake file.
 	WithIngestLock(ctx context.Context, fn func(tx Store) error) error
+	// WithArtifactLifecycleLock serializes artifact byte creation/registration
+	// with retention. The callback receives the transaction holding the lock.
+	WithArtifactLifecycleLock(ctx context.Context, fn func(tx Store) error) error
 
 	// Submissions
 	CreateSubmission(ctx context.Context, s domain.Submission) (domain.Submission, error)
@@ -64,6 +67,7 @@ type Store interface {
 	GetHold(ctx context.Context, id uuid.UUID) (domain.Hold, error)
 	ListCombosBySubmission(ctx context.Context, submissionID uuid.UUID, cutoff time.Time) ([]domain.HoldCombo, error)
 	SetHoldStatus(ctx context.Context, id uuid.UUID, status domain.HoldStatus) error
+	SetHoldStatusIfOpen(ctx context.Context, id uuid.UUID, status domain.HoldStatus) (bool, error)
 	SetHoldReleaseArtifact(ctx context.Context, holdID, artifactID uuid.UUID) error
 
 	// Reviews

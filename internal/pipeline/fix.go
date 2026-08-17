@@ -52,14 +52,17 @@ func FixSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) error {
 		return err
 	}
 	fixedSum := checksum.Bytes(fixedData)
-	if err := d.Files.Put(ctx, fixedSum, fixedData); err != nil {
+	if err := d.Store.WithArtifactLifecycleLock(ctx, func(tx ports.Store) error {
+		if err := d.Files.Put(ctx, fixedSum, fixedData); err != nil {
+			return err
+		}
+		_, err := tx.CreateArtifact(ctx, domain.Artifact{
+			SubmissionID: submissionID,
+			Kind:         domain.ArtifactFixed,
+			Checksum:     fixedSum,
+			State:        domain.ArtifactStaged,
+		})
 		return err
-	}
-	if _, err := d.Store.CreateArtifact(ctx, domain.Artifact{
-		SubmissionID: submissionID,
-		Kind:         domain.ArtifactFixed,
-		Checksum:     fixedSum,
-		State:        domain.ArtifactStaged,
 	}); err != nil {
 		return err
 	}

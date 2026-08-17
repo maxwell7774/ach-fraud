@@ -44,6 +44,35 @@ func TestRequeueJobUnknown(t *testing.T) {
 	}
 }
 
+func TestSetHoldStatusIfOpenIsConditional(t *testing.T) {
+	st := NewStore()
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "a.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("submission: %v", err)
+	}
+	hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID})
+	if err != nil {
+		t.Fatalf("header: %v", err)
+	}
+	entry, err := st.CreateBatchEntry(ctx, domain.BatchEntry{HeaderID: hdr.ID, ReceiverAccount: "acct"})
+	if err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+	hold, err := st.CreateHold(ctx, entry.ID, domain.HoldPending, "velocity")
+	if err != nil {
+		t.Fatalf("hold: %v", err)
+	}
+	changed, err := st.SetHoldStatusIfOpen(ctx, hold.ID, domain.HoldApproved)
+	if err != nil || !changed {
+		t.Fatalf("first transition: changed=%v err=%v", changed, err)
+	}
+	changed, err = st.SetHoldStatusIfOpen(ctx, hold.ID, domain.HoldDeclined)
+	if err != nil || changed {
+		t.Fatalf("stale transition: changed=%v err=%v", changed, err)
+	}
+}
+
 func TestListCombosBySubmission(t *testing.T) {
 	st := NewStore()
 	ctx := context.Background()

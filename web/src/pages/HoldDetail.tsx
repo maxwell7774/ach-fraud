@@ -1,18 +1,20 @@
-import { For, Show } from "solid-js";
-import { createAsync, useParams, useAction, useSubmission, A } from "@solidjs/router";
+import { createSignal, For, Show } from "solid-js";
+import { createAsync, useParams, useAction, useSubmission, A, revalidate } from "@solidjs/router";
 import { dollars, fmtDateTime, fmtDate, releaseStateLabel } from "../api";
-import { Badge, Loading } from "../components";
+import { Badge, Loading, QueryError } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
-import { approveHoldAction, declineHoldAction, holdQuery } from "../queries";
+import { approveHoldAction, declineHoldAction, holdQuery, usePolling } from "../queries";
 import { ArrowLeftIcon, CheckIcon, XIcon } from "../icons";
 
 export default function HoldDetail() {
+  usePolling("hold");
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();
-  const hold = createAsync(() => holdQuery(params.id));
+  const [error, setError] = createSignal<unknown>();
+  const hold = createAsync(() => { setError(undefined); return holdQuery(params.id).catch((e) => { setError(e); return undefined; }); });
   const approve = useAction(approveHoldAction);
   const decline = useAction(declineHoldAction);
   const approveSub = useSubmission(approveHoldAction);
@@ -51,7 +53,7 @@ export default function HoldDetail() {
   }
 
   return (
-    <Show when={hold()} fallback={<Loading label="Loading hold…" />}>
+    <Show when={hold()} fallback={<Show when={error()} fallback={<Loading label="Loading hold…" />}><QueryError error={error()} onRetry={() => revalidate("hold")} /></Show>}>
       {(h) => (
         <>
           <A class="back-link" href="/holds">

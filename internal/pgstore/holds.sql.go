@@ -751,3 +751,22 @@ func (q *Queries) SetHoldStatus(ctx context.Context, arg SetHoldStatusParams) er
 	_, err := q.db.Exec(ctx, setHoldStatus, arg.Status, arg.ID)
 	return err
 }
+
+const setHoldStatusIfOpen = `-- name: SetHoldStatusIfOpen :one
+UPDATE holds
+SET status = $1, updated_at = NOW()
+WHERE id = $2 AND status IN ('pending', 'auto_declined')
+RETURNING id
+`
+
+type SetHoldStatusIfOpenParams struct {
+	Status string
+	ID     pgtype.UUID
+}
+
+func (q *Queries) SetHoldStatusIfOpen(ctx context.Context, arg SetHoldStatusIfOpenParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, setHoldStatusIfOpen, arg.Status, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}

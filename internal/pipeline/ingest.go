@@ -25,17 +25,16 @@ func Ingest(ctx context.Context, d Deps, in ports.Input) (*IngestResult, error) 
 	for _, f := range files {
 		sum := checksum.Bytes(f.Data)
 
-		// Store the bytes first (content-addressed, idempotent), then check for
+		// Store the bytes and registration under the lifecycle lock, then check for
 		// a duplicate and register the submission + original artifact + fix job
 		// atomically under an advisory lock, so two overlapping runs cannot
 		// both register the same intake file.
-		if err := d.Files.Put(ctx, sum, f.Data); err != nil {
-			return nil, err
-		}
-
 		var sub domain.Submission
 		duplicate := false
 		if err := d.Store.WithIngestLock(ctx, func(tx ports.Store) error {
+			if err := d.Files.Put(ctx, sum, f.Data); err != nil {
+				return err
+			}
 			dup, err := isDuplicate(ctx, tx, f.Filename, sum, now, d.Policy.DedupWindowDays)
 			if err != nil {
 				return err

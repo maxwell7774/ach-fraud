@@ -234,6 +234,22 @@ func (s *Store) SetHoldStatus(ctx context.Context, id uuid.UUID, status domain.H
 	return nil
 }
 
+func (s *Store) SetHoldStatusIfOpen(ctx context.Context, id uuid.UUID, status domain.HoldStatus) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.holds[id]
+	if !ok {
+		return false, domain.ErrNotFound
+	}
+	if h.Status != domain.HoldPending && h.Status != domain.HoldAutoDeclined {
+		return false, nil
+	}
+	h.Status = status
+	s.holds[id] = h
+	s.holdUpd[id] = s.Now()
+	return true, nil
+}
+
 func (s *Store) SetHoldReleaseArtifact(ctx context.Context, holdID, artifactID uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

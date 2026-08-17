@@ -73,6 +73,7 @@ func (s *Server) handleUpdateRecipient(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := s.deps.Store.UpdateRecipient(r.Context(), domain.Recipient{
 		ID:         id,
+		Email:      req.Email,
 		Name:       req.Name,
 		Enabled:    enabledOr(req.Enabled, true),
 		AlertTypes: req.AlertTypes,
@@ -109,6 +110,9 @@ func decodeRecipient(r *http.Request) (recipientRequest, error) {
 	var req recipientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return req, err
+	}
+	if len(req.Email) > 320 || len(req.Name) > 200 {
+		return req, errors.New("recipient field is too long")
 	}
 	// Reject alert types outside the known set so a typo cannot silently
 	// subscribe someone to nothing.

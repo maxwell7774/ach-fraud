@@ -7,8 +7,8 @@ VALUES ($1, $2, $3)
 RETURNING *;
 
 -- name: UpdateRecipient :one
-UPDATE recipients SET name = $1, enabled = $2
-WHERE id = $3
+UPDATE recipients SET email = $1, name = $2, enabled = $3
+ WHERE id = $4
 RETURNING *;
 
 -- name: DeleteRecipient :exec

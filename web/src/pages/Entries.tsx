@@ -1,8 +1,8 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync } from "@solidjs/router";
+import { createAsync, revalidate } from "@solidjs/router";
 import { entriesQuery } from "../queries";
 import { api, dollars, fmtDate } from "../api";
-import { EmptyState, Loading, Pagination, SortableTh, DatePicker } from "../components";
+import { EmptyState, Loading, Pagination, SortableTh, DatePicker, QueryError } from "../components";
 
 export default function Entries() {
   const [search, setSearch] = createSignal("");
@@ -13,6 +13,7 @@ export default function Entries() {
   const [pageSize, setPageSize] = createSignal(25);
   const [sort, setSort] = createSignal("");
   const [dir, setDir] = createSignal("");
+  const [queryError, setQueryError] = createSignal<unknown>();
 
   const key = createMemo(() => ({
     q: q() || undefined,
@@ -23,7 +24,7 @@ export default function Entries() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const data = createAsync(() => entriesQuery(key()));
+  const data = createAsync(() => { setQueryError(undefined); return entriesQuery(key()).catch((e) => { setQueryError(e); return undefined; }); });
 
   function applyFilters() {
     setQ(search());
@@ -64,7 +65,7 @@ export default function Entries() {
           </button>
         </form>
       </div>
-      <Show when={data()} fallback={<Loading label="Loading entries…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading entries…" />}><QueryError error={queryError()} onRetry={() => revalidate("entries")} /></Show>}>
         <div class="table-wrap">
           <Show
             when={data()!.entries.length > 0}

@@ -1,9 +1,9 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { useSearchParams, A } from "@solidjs/router";
-import { createAsync } from "@solidjs/router";
+import { createAsync, revalidate } from "@solidjs/router";
 import { submissionsQuery, usePolling } from "../queries";
 import { api, fmtDateTime } from "../api";
-import { Badge, EmptyState, Loading, Pagination, SortableTh, DatePicker, PageHeader } from "../components";
+import { Badge, EmptyState, Loading, Pagination, SortableTh, DatePicker, PageHeader, QueryError } from "../components";
 
 const STATUSES = ["", "received", "ready", "archived", "failed"];
 
@@ -22,6 +22,7 @@ export default function Submissions() {
   const [pageSize, setPageSize] = createSignal(25);
   const [sort, setSort] = createSignal("");
   const [dir, setDir] = createSignal("");
+  const [queryError, setQueryError] = createSignal<unknown>();
 
   const key = createMemo(() => ({
     status: status() || undefined,
@@ -33,7 +34,7 @@ export default function Submissions() {
     sort: sort() || undefined,
     dir: dir() || undefined,
   }));
-  const data = createAsync(() => submissionsQuery(key()));
+  const data = createAsync(() => { setQueryError(undefined); return submissionsQuery(key()).catch((e) => { setQueryError(e); return undefined; }); });
 
   function setStatus(s: string) {
     setParams({ status: s || undefined });
@@ -94,7 +95,7 @@ export default function Submissions() {
           </button>
         </form>
       </div>
-      <Show when={data()} fallback={<Loading label="Loading files…" />}>
+      <Show when={data()} fallback={<Show when={queryError()} fallback={<Loading label="Loading files…" />}><QueryError error={queryError()} onRetry={() => revalidate("submissions")} /></Show>}>
         <div class="table-wrap">
           <Show
             when={data()!.submissions.length > 0}

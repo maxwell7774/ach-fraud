@@ -1,15 +1,15 @@
 import { createSignal, For, Show } from "solid-js";
-import { useParams, A, useAction, createAsync } from "@solidjs/router";
+import { useParams, A, useAction, createAsync, revalidate } from "@solidjs/router";
 import { submissionQuery, verifyQuery, requeueJobAction, usePolling } from "../queries";
 import { api, dollars, fmtDateTime, type Job } from "../api";
-import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination, PageHeader } from "../components";
+import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination, PageHeader, QueryError } from "../components";
 import { ArrowLeftIcon } from "../icons";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { isSuperAdmin } from "../user";
 
 export default function SubmissionDetail() {
-  const { remaining } = usePolling("submission");
+  const { remaining } = usePolling("submission", "verify");
   const params = useParams<{ id: string }>();
   const { show: flash } = useFlash();
   const { confirm } = useConfirm();
@@ -18,14 +18,26 @@ export default function SubmissionDetail() {
   const [holdPageSize, setHoldPageSize] = createSignal(25);
   const [entryPage, setEntryPage] = createSignal(1);
   const [entryPageSize, setEntryPageSize] = createSignal(25);
-  const sub = createAsync(() =>
-    submissionQuery({ id: params.id, page: holdPage(), pageSize: holdPageSize() })
-  );
-  const verify = createAsync(() =>
-    verifyQuery({ id: params.id, page: entryPage(), pageSize: entryPageSize() })
-  );
+  const [subError, setSubError] = createSignal<unknown>();
+  const [verifyError, setVerifyError] = createSignal<unknown>();
+  const sub = createAsync(() => {
+    setSubError(undefined);
+    return submissionQuery({ id: params.id, page: holdPage(), pageSize: holdPageSize() }).catch((e) => {
+      setSubError(e);
+      return undefined;
+    });
+  });
+  const verify = createAsync(() => {
+    setVerifyError(undefined);
+    return verifyQuery({ id: params.id, page: entryPage(), pageSize: entryPageSize() }).catch((e) => {
+      setVerifyError(e);
+      return undefined;
+    });
+  });
   const [viewing, setViewing] = createSignal<string | null>(null);
   const [content, setContent] = createSignal("");
+  const [artifactError, setArtifactError] = createSignal("");
+  const [artifactLoading, setArtifactLoading] = createSignal(false);
 
   async function viewArtifact(id: string) {
     if (viewing() === id) {
@@ -33,22 +45,31 @@ export default function SubmissionDetail() {
       return;
     }
     setViewing(id);
-    setContent(await api.artifactContent(id));
+    setArtifactError("");
+    setArtifactLoading(true);
+    try {
+      setContent(await api.artifactContent(id));
+    } catch (e) {
+      setContent("");
+      setArtifactError(e instanceof Error ? e.message : "failed to load artifact");
+    } finally {
+      setArtifactLoading(false);
+    }
   }
 
   async function onRequeue(j: Job) {
-    if (!(await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" })))
-      return;
-    const res = await requeue({ id: j.id });
-    if (!res.ok) {
-      flash("error", res.error ?? "failed to requeue job");
+    const res = await confirm(`Requeue the ${j.kind.replace(/_/g, " ")} job for retry?`, { title: "Requeue job" });
+    if (!res.ok) return;
+    const result = await requeue({ id: j.id });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed to requeue job");
       return;
     }
     flash("success", "Job requeued — the next run will retry it");
   }
 
   return (
-    <Show when={sub()} fallback={<Loading label="Loading file…" />}>
+    <Show when={sub()} fallback={<Show when={subError()} fallback={<Loading label="Loading file…" />}><QueryError error={subError()} onRetry={() => revalidate("submission")} /></Show>}>
       {(s) => (
         <>
           <A class="back-link" href="/submissions">
@@ -106,7 +127,11 @@ export default function SubmissionDetail() {
             </table>
           </div>
           <Show when={viewing()}>
-            <FileViewer content={content()} />
+            <Show when={!artifactLoading()} fallback={<Loading label="Loading artifact…" />}>
+              <Show when={!artifactError()} fallback={<p class="error issue">{artifactError()}</p>}>
+                <FileViewer content={content()} />
+              </Show>
+            </Show>
           </Show>
 
           <h2 class="section">Verification</h2>
@@ -129,7 +154,7 @@ export default function SubmissionDetail() {
               </div>
             )}
           </Show>
-          <Show when={verify()} fallback={<Loading label="Checking artifact chain…" />}>
+          <Show when={verify()} fallback={<Show when={verifyError()} fallback={<Loading label="Checking artifact chain…" />}><QueryError error={verifyError()} onRetry={() => revalidate("verify")} /></Show>}>
             {(v) => (
               <>
                 <div class="detail-card">

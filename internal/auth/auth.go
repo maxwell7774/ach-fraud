@@ -1,16 +1,18 @@
 // Package auth implements the Microsoft Entra (OAuth2/OIDC) login and the
 // server-side sessions that back the web API. The Provider drives the
-// authorization-code + PKCE flow and reads the id_token claims (validating
-// issuer, audience, and expiry) using only golang.org/x/oauth2 and the stdlib;
+// authorization-code + PKCE flow and verifies id_token signatures and claims
+// using Entra's cached JWKS and the standard library;
 // the SessionManager issues and verifies opaque session cookies whose sha256
 // lives in the store.
 package auth
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/27actions/ach/internal/domain"
@@ -92,8 +94,12 @@ type Entra interface {
 // tenant; we never act on behalf of the user, so no resource/Graph scopes or
 // delegated permissions are involved.
 type Provider struct {
-	issuer string
-	oauth  *oauth2.Config
+	issuer  string
+	oauth   *oauth2.Config
+	jwksURL string
+	jwksMu  sync.Mutex
+	keys    map[string]*rsa.PublicKey
+	fetched time.Time
 }
 
 var _ Entra = (*Provider)(nil)
@@ -105,7 +111,8 @@ func NewProvider(cfg Config) (*Provider, error) {
 	}
 	base := "https://login.microsoftonline.com/" + cfg.TenantID + "/oauth2/v2.0"
 	return &Provider{
-		issuer: cfg.Issuer(),
+		issuer:  cfg.Issuer(),
+		jwksURL: "https://login.microsoftonline.com/" + cfg.TenantID + "/discovery/v2.0/keys",
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -136,7 +143,7 @@ func (p *Provider) Exchange(ctx context.Context, code, verifier string) (Identit
 	if !ok {
 		return Identity{}, errors.New("token response contained no id_token")
 	}
-	claims, err := parseIDToken(rawIDToken, p.issuer, p.oauth.ClientID, time.Now())
+	claims, err := p.parseIDToken(ctx, rawIDToken, p.issuer, p.oauth.ClientID, time.Now())
 	if err != nil {
 		return Identity{}, fmt.Errorf("validating id_token: %w", err)
 	}

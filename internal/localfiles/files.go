@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/27actions/ach/internal/checksum"
 )
 
 // Files stores artifact bytes under root, one file per checksum.
@@ -30,7 +32,17 @@ func (f *Files) path(checksum string) string {
 	return filepath.Join(f.root, checksum[:2], checksum)
 }
 
+func validateChecksum(sum string) error {
+	if !checksum.Valid(sum) {
+		return fmt.Errorf("invalid artifact checksum %q", sum)
+	}
+	return nil
+}
+
 func (f *Files) Get(_ context.Context, checksum string) ([]byte, error) {
+	if err := validateChecksum(checksum); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(f.path(checksum))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -38,10 +50,19 @@ func (f *Files) Get(_ context.Context, checksum string) ([]byte, error) {
 		}
 		return nil, err
 	}
+	if got := checksumBytes(data); got != checksum {
+		return nil, fmt.Errorf("artifact %s checksum mismatch: got %s", checksum, got)
+	}
 	return data, nil
 }
 
 func (f *Files) Put(_ context.Context, checksum string, data []byte) error {
+	if err := validateChecksum(checksum); err != nil {
+		return err
+	}
+	if got := checksumBytes(data); got != checksum {
+		return fmt.Errorf("artifact checksum mismatch: key %s, data %s", checksum, got)
+	}
 	final := f.path(checksum)
 	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
 		return err
@@ -64,6 +85,9 @@ func (f *Files) Put(_ context.Context, checksum string, data []byte) error {
 }
 
 func (f *Files) Delete(_ context.Context, checksum string) error {
+	if err := validateChecksum(checksum); err != nil {
+		return err
+	}
 	path := f.path(checksum)
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -78,4 +102,8 @@ func (f *Files) Delete(_ context.Context, checksum string) error {
 		_ = os.Remove(dir)
 	}
 	return nil
+}
+
+func checksumBytes(data []byte) string {
+	return checksum.Bytes(data)
 }

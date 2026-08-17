@@ -300,7 +300,7 @@ func TestRecipientsCRUD(t *testing.T) {
 
 	rr = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, httptest.NewRequest("PUT", "/api/recipients/"+rec.ID.String(),
-		strings.NewReader(`{"email":"ops@corp.com","name":"Ops2","enabled":false,"alert_types":["velocity_leaks"]}`)))
+		strings.NewReader(`{"email":"alerts@corp.com","name":"Ops2","enabled":false,"alert_types":["velocity_leaks"]}`)))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("update = %d %s", rr.Code, rr.Body.String())
 	}
@@ -308,7 +308,7 @@ func TestRecipientsCRUD(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if up.Name != "Ops2" || up.Enabled || len(up.AlertTypes) != 1 || up.AlertTypes[0] != "velocity_leaks" {
+	if up.Email != "alerts@corp.com" || up.Name != "Ops2" || up.Enabled || len(up.AlertTypes) != 1 || up.AlertTypes[0] != "velocity_leaks" {
 		t.Fatalf("updated = %+v", up)
 	}
 
@@ -334,6 +334,30 @@ func TestRecipientsRejectsUnknownAlertType(t *testing.T) {
 		strings.NewReader(`{"email":"ops@corp.com","alert_types":["bogus"]}`)))
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("create = %d, want 400 (%s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRecipientWithoutAlertsReturnsEmptyArray(t *testing.T) {
+	s, _ := testServer(t)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("POST", "/api/recipients",
+		strings.NewReader(`{"email":"quiet@corp.com","alert_types":[]}`)))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, httptest.NewRequest("GET", "/api/recipients", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rr.Code, rr.Body.String())
+	}
+	var page struct {
+		Recipients []domain.Recipient `json:"recipients"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page.Recipients) != 1 || page.Recipients[0].AlertTypes == nil {
+		t.Fatalf("recipients = %+v; expected non-nil empty alert_types", page.Recipients)
 	}
 }
 

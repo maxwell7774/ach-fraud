@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Hold, dollars, human } from "./api";
+import { Hold, dollars, errorMessage, human } from "./api";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -35,6 +35,16 @@ export function Loading(props: { label?: string }) {
       <span class="spinner" aria-hidden="true" />
       {props.label ?? "Loading…"}
     </p>
+  );
+}
+
+export function QueryError(props: { error: unknown; onRetry: () => void }) {
+  return (
+    <div class="empty-state query-error" role="alert">
+      <p class="empty">Could not load this data.</p>
+      <p class="empty-hint">{errorMessage(props.error)}</p>
+      <button class="btn btn-outline btn-sm" type="button" onClick={props.onRetry}>Retry</button>
+    </div>
   );
 }
 
@@ -77,7 +87,19 @@ export function SortableTh(props: {
     props.onSort(props.col, active() && props.dir === "asc" ? "desc" : "asc");
   }
   return (
-    <th class={cls()} onClick={click}>
+    <th
+      class={cls()}
+      role="columnheader"
+      aria-sort={active() ? (props.dir === "desc" ? "descending" : "ascending") : "none"}
+      tabIndex={0}
+      onClick={click}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          click();
+        }
+      }}
+    >
       {props.children}
       <span class="sort-icon">
         {active() ? (

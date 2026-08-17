@@ -2,11 +2,13 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/27actions/ach/internal/domain"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -163,6 +165,17 @@ func (s *Store) SetHoldStatus(ctx context.Context, id uuid.UUID, status domain.H
 		Status: string(status),
 		ID:     toPgUUID(id),
 	})
+}
+
+func (s *Store) SetHoldStatusIfOpen(ctx context.Context, id uuid.UUID, status domain.HoldStatus) (bool, error) {
+	_, err := s.q.SetHoldStatusIfOpen(ctx, SetHoldStatusIfOpenParams{
+		Status: string(status),
+		ID:     toPgUUID(id),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Store) SetHoldReleaseArtifact(ctx context.Context, holdID, artifactID uuid.UUID) error {
