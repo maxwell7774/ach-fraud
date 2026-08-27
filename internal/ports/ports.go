@@ -48,6 +48,7 @@ type Store interface {
 	CreateBatchEntry(ctx context.Context, e domain.BatchEntry) (domain.BatchEntry, error)
 	ListEntriesBySubmission(ctx context.Context, submissionID uuid.UUID) ([]domain.BatchEntry, error)
 	HasEntryByRdfiAccount(ctx context.Context, rdfi, account string) (bool, error)
+	GetEntryByID(ctx context.Context, entryID uuid.UUID) (domain.BatchEntry, error)
 	SumVelocity(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error)
 	SumHeldByGroup(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error)
 	ListEntriesFiltered(ctx context.Context, search string, start, end *time.Time, sort, dir string, limit, offset int) ([]domain.BatchEntry, error)

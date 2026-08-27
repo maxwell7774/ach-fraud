@@ -30,12 +30,11 @@ func Prune(ctx context.Context, d Deps, retentionDays int) (*PruneResult, error)
 					return err
 				}
 			}
-			seen := map[string]bool{}
+			doomedSet := map[string]bool{}
 			for _, c := range candidates {
-				if seen[c.Checksum] {
+				if doomedSet[c.Checksum] {
 					continue
 				}
-				seen[c.Checksum] = true
 				refs, err := tx.ListArtifactsByChecksum(ctx, c.Checksum)
 				if err != nil {
 					return err
@@ -49,6 +48,7 @@ func Prune(ctx context.Context, d Deps, retentionDays int) (*PruneResult, error)
 				}
 				if allPruned {
 					doomed = append(doomed, c.Checksum)
+					doomedSet[c.Checksum] = true
 				}
 			}
 			for _, sum := range doomed {

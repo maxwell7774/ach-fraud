@@ -108,6 +108,9 @@ export interface BatchEntry {
   effective_date?: string;
   customer_id: string;
   filename: string;
+  submission_id?: string;
+  hold_id?: string;
+  hold_status?: string;
 }
 
 export interface BatchHeader {
@@ -286,15 +289,25 @@ export const api = {
     req(`/api/holds/${id}/approve`, { method: "POST", body: JSON.stringify(body) }),
   decline: (id: string, body: { note: string; actor: string }) =>
     req(`/api/holds/${id}/decline`, { method: "POST", body: JSON.stringify(body) }),
-  bulk: (action: "approve" | "decline", ids: string[], body: { note: string; actor: string }) =>
+  bulk: (
+    action: "approve" | "decline" | "set_status",
+    ids: string[],
+    body: { note: string; actor: string },
+    status?: string
+  ) =>
     req<{ count: number }>(`/api/holds/bulk`, {
       method: "POST",
-      body: JSON.stringify({ action, ids, note: body.note, actor: body.actor }),
+      body: JSON.stringify({ action, ids, note: body.note, actor: body.actor, status }),
     }),
+  setStatus: (id: string, body: { status: string; note: string; actor: string; scope?: string }) =>
+    req(`/api/holds/${id}/status`, { method: "POST", body: JSON.stringify(body) }),
   submissions: (p: ListParams = {}) => req<SubmissionsPage>(`/api/submissions${qs(p)}`),
   submission: (id: string, p: ListParams = {}) => req<SubmissionDetail>(`/api/submissions/${id}${qs(p)}`),
   verifySubmission: (id: string, p: ListParams = {}) => req<SubmissionVerify>(`/api/submissions/${id}/verify${qs(p)}`),
   entries: (p: ListParams = {}) => req<EntriesPage>(`/api/entries${qs(p)}`),
+  entry: (id: string) => req<BatchEntry>(`/api/entries/${id}`),
+  createEntryHold: (id: string, body: { status?: string; reason: string; actor: string }) =>
+    req<{ id: string; status: string }>(`/api/entries/${id}/hold`, { method: "POST", body: JSON.stringify(body) }),
   headers: (p: ListParams = {}) => req<HeadersPage>(`/api/headers${qs(p)}`),
   artifactContent: (id: string) =>
     fetch(`/api/artifacts/${id}/content`).then((r) => {

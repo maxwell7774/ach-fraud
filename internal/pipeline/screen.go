@@ -51,8 +51,12 @@ func ScreenSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Scr
 	declined := make(map[string]bool, len(combos))
 	for _, c := range combos {
 		key := c.Rdfi + "|" + c.ReceiverAccount
-		approved[key] = c.HasApproved
-		declined[key] = c.HasDeclined
+		switch domain.HoldStatus(c.LatestStatus) {
+		case domain.HoldApproved:
+			approved[key] = true
+		case domain.HoldDeclined, domain.HoldAutoDeclined:
+			declined[key] = true
+		}
 	}
 
 	// Same-day velocity per receiver account/RDFI/date/customer, summed across

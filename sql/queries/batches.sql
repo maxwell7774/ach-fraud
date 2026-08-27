@@ -14,6 +14,15 @@ SELECT EXISTS(
     WHERE rdfi = $1 AND receiver_account = $2
 ) AS "exists";
 
+-- name: GetBatchEntryByID :one
+SELECT be.*, bh.customer_id, bh.effective_date, s.id AS submission_id, s.filename,
+       h.id AS hold_id, h.status AS hold_status
+FROM batch_entries be
+JOIN batch_headers bh ON bh.id = be.header_id
+JOIN submissions s ON s.id = bh.submission_id
+LEFT JOIN holds h ON h.entry_id = be.id
+WHERE be.id = $1;
+
 -- name: ListEntriesBySubmission :many
 SELECT be.*, bh.customer_id, bh.effective_date
 FROM batch_entries be

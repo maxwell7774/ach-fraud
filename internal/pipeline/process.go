@@ -108,10 +108,9 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 		ids  []uuid.UUID
 		held []achp.HeldEntry
 	}
-	releaseDate := d.Clock.Now().Format("060102")
 	var releases []builtRelease
 	for _, g := range groups {
-		rel, _, ids, err := achp.BuildRelease(fixedFile, g.held, d.Policy, releaseDate)
+		rel, _, ids, err := achp.BuildRelease(fixedFile, g.held, d.Policy)
 		if err != nil {
 			return nil, err
 		}

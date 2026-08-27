@@ -122,3 +122,108 @@ func bulkReview(ctx context.Context, d Deps, ids []uuid.UUID, actor, note string
 	}
 	return count, nil
 }
+
+// ErrInvalidHoldStatus is returned when an override targets a status that is
+// not one of the supported hold states.
+var ErrInvalidHoldStatus = errors.New("invalid hold status")
+
+// overrideableStatus reports whether a hold may be overridden to the given
+// status. Every terminal state (and a reset to pending) is allowed; the
+// behavior is purely a record change for future screening, so any of the
+// existing states is fair game.
+func overrideableStatus(s domain.HoldStatus) bool {
+	switch s {
+	case domain.HoldPending, domain.HoldApproved, domain.HoldDeclined, domain.HoldAutoDeclined:
+		return true
+	}
+	return false
+}
+
+// OverrideHoldStatus changes a hold's status directly (e.g. approved to
+// declined, or declined to approved) for record-keeping and future screening.
+// Unlike ApproveHold/DeclineHold it does NOT re-run the file pipeline or
+// re-queue release jobs — the money already moved keeps its outcome, and only
+// the combo's standing for later files changes. When group is true and the
+// hold belongs to a velocity group, every hold sharing its release artifact is
+// overridden together, because a split's standing is decided as a unit. Each
+// change is audited with a review.
+func OverrideHoldStatus(ctx context.Context, d Deps, holdID uuid.UUID, actor, note string, status domain.HoldStatus, group bool) (int, error) {
+	if !overrideableStatus(status) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidHoldStatus, status)
+	}
+	h, err := d.Store.GetHold(ctx, holdID)
+	if err != nil {
+		return 0, err
+	}
+
+	// A velocity group's holds share a release artifact; override them as a
+	// unit (when requested) so the combo's standing is consistent.
+	targets := []domain.Hold{h}
+	if group && h.ReleaseArtifactID != nil {
+		members, err := d.Store.ListHoldsByReleaseArtifact(ctx, *h.ReleaseArtifactID)
+		if err != nil {
+			return 0, err
+		}
+		if len(members) > 1 {
+			targets = members
+		}
+	}
+
+	action := string(status)
+	if err := d.Store.WithinTx(ctx, func(tx ports.Store) error {
+		for _, m := range targets {
+			if err := tx.SetHoldStatus(ctx, m.ID, status); err != nil {
+				return err
+			}
+			if err := tx.CreateReview(ctx, domain.Review{HoldID: m.ID, Actor: actor, Action: action, Note: note}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	return len(targets), nil
+}
+
+// OverrideHolds changes several holds to the same status in bulk, skipping any
+// that fail, and returns how many were changed.
+func OverrideHolds(ctx context.Context, d Deps, ids []uuid.UUID, actor, note string, status domain.HoldStatus) (int, error) {
+	if !overrideableStatus(status) {
+		return 0, fmt.Errorf("%w: %q", ErrInvalidHoldStatus, status)
+	}
+	count := 0
+	for _, id := range ids {
+		n, err := OverrideHoldStatus(ctx, d, id, actor, note, status, true)
+		if err != nil {
+			return count, err
+		}
+		count += n
+	}
+	return count, nil
+}
+
+// ManuallyCreateHold creates a hold on a specific entry outside of the normal
+// screening flow — e.g. an analyst flagging an entry for review, or manually
+// whitelisting/blacklisting a receiver. It does NOT re-run the file pipeline or
+// touch any transmitted file; the new hold only affects how future files to
+// that receiver are screened (via the last-updated combo standing) and is
+// recorded with a review for audit. Only approved and declined statuses are
+// allowed; pending and auto_declined are system statuses from the screening
+// pipeline.
+func ManuallyCreateHold(ctx context.Context, d Deps, entryID uuid.UUID, actor, reason string, status domain.HoldStatus) (uuid.UUID, error) {
+	if status != domain.HoldApproved && status != domain.HoldDeclined {
+		return uuid.Nil, fmt.Errorf("%w: %q (manual holds can only be approved or declined)", ErrInvalidHoldStatus, status)
+	}
+	if _, err := d.Store.GetEntryByID(ctx, entryID); err != nil {
+		return uuid.Nil, err
+	}
+	h, err := d.Store.CreateHold(ctx, entryID, status, reason)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := d.Store.CreateReview(ctx, domain.Review{HoldID: h.ID, Actor: actor, Action: string(status), Note: reason}); err != nil {
+		return uuid.Nil, err
+	}
+	return h.ID, nil
+}

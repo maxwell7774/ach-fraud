@@ -471,6 +471,129 @@ func TestApproveHold(t *testing.T) {
 	}
 }
 
+func TestSetHoldStatus(t *testing.T) {
+	s, st := testServer(t)
+	id := seedHold(t, st)
+
+	body := `{"status":"declined","note":"override","actor":"reviewer-a","scope":"hold"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/holds/"+id.String()+"/status", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	h, err := st.GetHold(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if h.Status != domain.HoldDeclined {
+		t.Fatalf("status = %s, want declined", h.Status)
+	}
+	reviews, _ := st.ListReviewsByHold(context.Background(), id)
+	if len(reviews) != 1 || reviews[0].Action != "declined" || reviews[0].Actor != "reviewer-a" {
+		t.Fatalf("unexpected reviews: %+v", reviews)
+	}
+}
+
+func TestSetHoldStatusRejectsInvalid(t *testing.T) {
+	s, st := testServer(t)
+	id := seedHold(t, st)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/holds/"+id.String()+"/status", strings.NewReader(`{"status":"bogus"}`))
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for invalid status", rr.Code)
+	}
+	h, _ := st.GetHold(context.Background(), id)
+	if h.Status != domain.HoldPending {
+		t.Fatalf("status = %s, want pending unchanged", h.Status)
+	}
+}
+
+func TestGetEntry(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, _ := st.CreateSubmission(ctx, domain.Submission{Filename: "test.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	hdr, _ := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	en, _ := st.CreateBatchEntry(ctx, domain.BatchEntry{HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "111111", Amount: 50000, TranCode: 22, Trace: "t1"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/entries/"+en.ID.String(), nil)
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var got domain.BatchEntry
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Trace != "t1" || got.ReceiverAccount != "111111" || got.Amount != 50000 {
+		t.Fatalf("unexpected entry: %+v", got)
+	}
+	if got.SubmissionID == "" {
+		t.Fatal("expected submission_id to be populated")
+	}
+}
+
+func TestCreateHold(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, _ := st.CreateSubmission(ctx, domain.Submission{Filename: "test.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	hdr, _ := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	en, _ := st.CreateBatchEntry(ctx, domain.BatchEntry{HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "111111", Amount: 50000, TranCode: 22, Trace: "t1"})
+
+	body := `{"status":"declined","reason":"suspicious","actor":"analyst"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/entries/"+en.ID.String()+"/hold", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	holds, _ := st.ListAllHolds(ctx)
+	if len(holds) != 1 {
+		t.Fatalf("expected 1 hold, got %d", len(holds))
+	}
+	if holds[0].Status != domain.HoldDeclined || holds[0].EntryID != en.ID {
+		t.Fatalf("unexpected hold: %+v", holds[0])
+	}
+	reviews, _ := st.ListReviewsByHold(ctx, holds[0].ID)
+	if len(reviews) != 1 || reviews[0].Actor != "analyst" {
+		t.Fatalf("unexpected reviews: %+v", reviews)
+	}
+}
+
+func TestCreateHoldDuplicate(t *testing.T) {
+	s, st := testServer(t)
+	ctx := context.Background()
+	sub, _ := st.CreateSubmission(ctx, domain.Submission{Filename: "test.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	hdr, _ := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	en, _ := st.CreateBatchEntry(ctx, domain.BatchEntry{HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "111111", Amount: 50000, TranCode: 22, Trace: "t1"})
+	st.CreateHold(ctx, en.ID, domain.HoldPending, "existing")
+
+	body := `{"status":"declined","reason":"dup","actor":"analyst"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/entries/"+en.ID.String()+"/hold", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rr.Code)
+	}
+}
+
+func TestCreateHoldNotFound(t *testing.T) {
+	s, _ := testServer(t)
+	fakeID := uuid.New()
+	body := `{"status":"approved","reason":"test","actor":"analyst"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/entries/"+fakeID.String()+"/hold", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+}
+
 func TestDeclineHoldConflictOnReviewed(t *testing.T) {
 	s, st := testServer(t)
 	id := seedHold(t, st)
@@ -992,7 +1115,7 @@ func TestVerifyIncludesSenderAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleaned: %v", err)
 	}
-	release, legs, _, err := achp.BuildRelease(fixed, held, s.deps.Policy, "260116")
+	release, legs, _, err := achp.BuildRelease(fixed, held, s.deps.Policy)
 	if err != nil {
 		t.Fatalf("release: %v", err)
 	}

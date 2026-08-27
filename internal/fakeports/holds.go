@@ -29,6 +29,9 @@ func (s *Store) populateHold(h domain.Hold) domain.Hold {
 			h.Filename = sub.Filename
 		}
 	}
+	if upd, ok := s.holdUpd[h.ID]; ok {
+		h.UpdatedAt = upd
+	}
 	return h
 }
 
@@ -185,7 +188,7 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 		if e.TranCode != 22 && e.TranCode != 32 {
 			continue
 		}
-		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Truncate(24*time.Hour).Before(cutoff.Truncate(24*time.Hour)) {
 			continue
 		}
 		key := e.Rdfi + "|" + e.ReceiverAccount
@@ -195,27 +198,32 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 		}
 	}
 
-	// Full hold history (no expiry) consulted only for those pairs. A combo is
-	// whitelisted by a prior approved hold, blacklisted by a prior declined
-	// hold; pending/auto_declined count for neither.
-	hasApproved := map[string]bool{}
-	hasDeclined := map[string]bool{}
+	// Full hold history (no expiry) consulted only for those pairs. The combo
+	// takes the status of its most-recently-updated hold: approved ->
+	// whitelisted, declined/auto_declined -> blacklisted, anything else
+	// (pending or no prior hold) -> undecided.
+	latest := map[string]domain.HoldStatus{}
+	latestAt := map[string]time.Time{}
 	for _, h := range s.holds {
-		en := s.entries[h.EntryID]
+		en, ok := s.entries[h.EntryID]
+		if !ok {
+			continue
+		}
 		key := en.Rdfi + "|" + en.ReceiverAccount
-		switch h.Status {
-		case domain.HoldApproved:
-			hasApproved[key] = true
-		case domain.HoldDeclined:
-			hasDeclined[key] = true
+		if _, want := combos[key]; !want {
+			continue
+		}
+		upd := s.holdUpd[h.ID]
+		if t, ok := latestAt[key]; !ok || upd.After(t) {
+			latestAt[key] = upd
+			latest[key] = h.Status
 		}
 	}
 
 	out := make([]domain.HoldCombo, 0, len(order))
 	for _, k := range order {
 		c := combos[k]
-		c.HasApproved = hasApproved[k]
-		c.HasDeclined = hasDeclined[k]
+		c.LatestStatus = string(latest[k])
 		out = append(out, *c)
 	}
 	return out, nil

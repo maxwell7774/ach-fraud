@@ -95,7 +95,11 @@ type BatchEntry struct {
 	EffectiveDate   *time.Time `json:"effective_date"`
 	CustomerID      string     `json:"customer_id"`
 	// Joined from the submission by the web reads.
-	Filename string `json:"filename"`
+	Filename     string `json:"filename"`
+	SubmissionID string `json:"submission_id"`
+	// Attached hold (one per entry, at most one).
+	HoldID     *uuid.UUID  `json:"hold_id,omitempty"`
+	HoldStatus *HoldStatus `json:"hold_status,omitempty"`
 }
 
 // HoldStatus is the review state of a hold.
@@ -125,6 +129,7 @@ type Hold struct {
 	EntryTranCode     int        `json:"entry_tran_code"`
 	EffectiveDate     *time.Time `json:"effective_date"`
 	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 	// Joined header/submission data (populated by the web reads).
 	CustomerID  string `json:"customer_id"`
 	CompanyName string `json:"company_name"`
@@ -277,14 +282,14 @@ type VelocitySum struct {
 }
 
 // HoldCombo is a receiver account/RDFI pair that appears in the submission
-// being screened, with whether the full hold history (no expiry) already
-// whitelisted it (HasApproved) or blacklisted it (HasDeclined). Pending and
-// auto_declined holds count for neither.
+// being screened, with the status of the full hold history's most-recently
+// updated hold for that pair (no expiry). Screening treats a latest status of
+// approved as whitelisted, declined/auto_declined as blacklisted, and anything
+// else (pending or no prior hold) as undecided.
 type HoldCombo struct {
 	Rdfi            string `json:"rdfi"`
 	ReceiverAccount string `json:"receiver_account"`
-	HasApproved     bool   `json:"has_approved"`
-	HasDeclined     bool   `json:"has_declined"`
+	LatestStatus    string `json:"latest_status"`
 }
 
 // Policy bundles the tunables that drive the hold rules. Thresholds are in

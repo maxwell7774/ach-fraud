@@ -71,18 +71,43 @@ func (s *Server) handleUpdateRecipient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	if req.Email == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("email is required"))
+		return
+	}
+	recs, err := s.deps.Store.ListRecipients(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	var existing *domain.Recipient
+	for _, rc := range recs {
+		if rc.ID == id {
+			existing = &rc
+			break
+		}
+	}
+	if existing == nil {
+		writeErr(w, http.StatusNotFound, domain.ErrNotFound)
+		return
+	}
+	if req.Name == "" {
+		req.Name = existing.Name
+	}
+	if req.Enabled == nil {
+		req.Enabled = &existing.Enabled
+	}
+	if req.AlertTypes == nil {
+		req.AlertTypes = existing.AlertTypes
+	}
 	rec, err := s.deps.Store.UpdateRecipient(r.Context(), domain.Recipient{
 		ID:         id,
 		Email:      req.Email,
 		Name:       req.Name,
-		Enabled:    enabledOr(req.Enabled, true),
+		Enabled:    *req.Enabled,
 		AlertTypes: req.AlertTypes,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, err)
-			return
-		}
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}

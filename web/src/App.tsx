@@ -9,6 +9,7 @@ import HoldDetail from "./pages/HoldDetail";
 import Submissions from "./pages/Submissions";
 import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
+import EntryDetail from "./pages/EntryDetail";
 import Headers from "./pages/Headers";
 import Events from "./pages/Events";
 import Jobs from "./pages/Jobs";
@@ -204,6 +205,7 @@ export default function App() {
             <Route path="/submissions" component={Submissions} />
             <Route path="/submissions/:id" component={SubmissionDetail} />
             <Route path="/entries" component={Entries} />
+            <Route path="/entries/:id" component={EntryDetail} />
             <Route path="/headers" component={Headers} />
             <Route path="/events" component={Events} />
             <Route path="/jobs" component={Jobs} />

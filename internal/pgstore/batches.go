@@ -66,6 +66,34 @@ func (s *Store) ListEntriesBySubmission(ctx context.Context, submissionID uuid.U
 	return out, nil
 }
 
+func (s *Store) GetEntryByID(ctx context.Context, entryID uuid.UUID) (domain.BatchEntry, error) {
+	r, err := s.q.GetBatchEntryByID(ctx, toPgUUID(entryID))
+	if err != nil {
+		return domain.BatchEntry{}, translate(err)
+	}
+	var holdStatus *domain.HoldStatus
+	if r.HoldStatus.Valid {
+		hs := domain.HoldStatus(r.HoldStatus.String)
+		holdStatus = &hs
+	}
+	return domain.BatchEntry{
+		ID:              toUUID(r.ID),
+		HeaderID:        toUUID(r.HeaderID),
+		Rdfi:            r.Rdfi,
+		ReceiverName:    r.ReceiverName,
+		ReceiverAccount: r.ReceiverAccount,
+		Amount:          r.Amount,
+		TranCode:        int(r.TranCode),
+		Trace:           r.Trace,
+		EffectiveDate:   toDate(r.EffectiveDate),
+		CustomerID:      r.CustomerID,
+		Filename:        r.Filename,
+		SubmissionID:    toUUID(r.SubmissionID).String(),
+		HoldID:          toUUIDPtr(r.HoldID),
+		HoldStatus:      holdStatus,
+	}, nil
+}
+
 func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error) {
 	rows, err := s.q.SumVelocity(ctx, SumVelocityParams{
 		Column1:      toPgDate(&cutoff),

@@ -34,7 +34,7 @@ func (s *Store) ListHoldsBySubmission(ctx context.Context, submissionID uuid.UUI
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time, r.UpdatedAt.Time))
 	}
 	return out, nil
 }
@@ -49,7 +49,7 @@ func (s *Store) ListHoldsByReleaseArtifact(ctx context.Context, artifactID uuid.
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time, r.UpdatedAt.Time))
 	}
 	return out, nil
 }
@@ -64,7 +64,7 @@ func (s *Store) ListAllHolds(ctx context.Context) ([]domain.Hold, error) {
 		out = append(out, toDomainHoldDetail(
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
-			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time))
+			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename, r.CreatedAt.Time, r.UpdatedAt.Time))
 	}
 	return out, nil
 }
@@ -78,7 +78,7 @@ func (s *Store) GetHold(ctx context.Context, id uuid.UUID) (domain.Hold, error) 
 		row.ID, row.EntryID, row.ReleaseArtifactID, row.Status, row.Reason,
 		row.EntryTrace, row.EntryRdfi, row.EntryReceiverName, row.EntryReceiverAccount,
 		row.EntryAmount, row.EntryTranCode, row.EffectiveDate, row.SubmissionID, row.CustomerID, row.CompanyName, row.Filename,
-		row.CreatedAt.Time,
+		row.CreatedAt.Time, row.UpdatedAt.Time,
 	), nil
 }
 
@@ -93,7 +93,7 @@ func (s *Store) ListHoldsByStatus(ctx context.Context, status string, limit int)
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
 			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename,
-			r.CreatedAt.Time,
+			r.CreatedAt.Time, r.UpdatedAt.Time,
 		))
 	}
 	return out, nil
@@ -127,7 +127,7 @@ func (s *Store) ListHoldsFiltered(ctx context.Context, status, search string, st
 			r.ID, r.EntryID, r.ReleaseArtifactID, r.Status, r.Reason,
 			r.EntryTrace, r.EntryRdfi, r.EntryReceiverName, r.EntryReceiverAccount,
 			r.EntryAmount, r.EntryTranCode, r.EffectiveDate, r.SubmissionID, r.CustomerID, r.CompanyName, r.Filename,
-			r.CreatedAt.Time,
+			r.CreatedAt.Time, r.UpdatedAt.Time,
 		))
 	}
 	return out, nil
@@ -153,8 +153,7 @@ func (s *Store) ListCombosBySubmission(ctx context.Context, submissionID uuid.UU
 		out = append(out, domain.HoldCombo{
 			Rdfi:            r.Rdfi,
 			ReceiverAccount: r.ReceiverAccount,
-			HasApproved:     r.HasApproved,
-			HasDeclined:     r.HasDeclined,
+			LatestStatus:    r.LatestStatus,
 		})
 	}
 	return out, nil
@@ -228,7 +227,7 @@ func toDomainHold(h Hold) domain.Hold {
 func toDomainHoldDetail(
 	id, entryID, release pgtype.UUID, status, reason, trace, rdfi, name, acct string,
 	amount int64, tran int32, eff pgtype.Date, submissionID pgtype.UUID, customer, company, filename string,
-	created time.Time,
+	created, updated time.Time,
 ) domain.Hold {
 	h := toDomainHold(Hold{
 		ID:                id,
@@ -249,5 +248,9 @@ func toDomainHoldDetail(
 	h.EntryTranCode = int(tran)
 	h.EffectiveDate = toDate(eff)
 	h.CreatedAt = created
+	h.UpdatedAt = updated
+	if h.UpdatedAt.IsZero() {
+		h.UpdatedAt = created
+	}
 	return h
 }

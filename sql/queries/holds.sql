@@ -137,10 +137,11 @@ WHERE h.id = $1;
 
 -- name: ListCombosBySubmission :many
 -- Whitelist/blacklist status for the receiver account/RDFI pairs present in the
--- submission being screened. Full hold history (no expiry) is consulted via the
--- EXISTS subqueries, but only for the pairs that matter to this file. A combo
--- is whitelisted by a prior APPROVED hold and blacklisted by a prior DECLINED
--- hold; pending/auto_declined holds count for neither (undecided, re-screened).
+-- submission being screened. The FULL hold history (no expiry) is consulted for
+-- those pairs, and the status of the most-recently-updated hold decides the
+-- combo: approved -> whitelisted, declined/auto_declined -> blacklisted, and
+-- anything else (pending or no prior hold) -> undecided. Only the pairs that
+-- matter to this file are considered.
 WITH my_combos AS (
     SELECT DISTINCT be.rdfi, be.receiver_account
     FROM batch_entries be
@@ -148,21 +149,18 @@ WITH my_combos AS (
     WHERE bh.submission_id = $1
       AND be.tran_code IN (22, 32)
       AND bh.effective_date >= $2::date
+),
+latest AS (
+    SELECT DISTINCT ON (be2.rdfi, be2.receiver_account)
+           be2.rdfi, be2.receiver_account, h.status
+    FROM batch_entries be2
+    JOIN holds h ON h.entry_id = be2.id
+    WHERE (be2.rdfi, be2.receiver_account) IN (SELECT rdfi, receiver_account FROM my_combos)
+    ORDER BY be2.rdfi, be2.receiver_account, h.updated_at DESC
 )
-SELECT mc.rdfi, mc.receiver_account,
-       EXISTS (
-           SELECT 1 FROM holds h
-           JOIN batch_entries be2 ON be2.id = h.entry_id
-           WHERE be2.rdfi = mc.rdfi AND be2.receiver_account = mc.receiver_account
-             AND h.status = 'approved'
-       ) AS has_approved,
-       EXISTS (
-           SELECT 1 FROM holds h
-           JOIN batch_entries be2 ON be2.id = h.entry_id
-           WHERE be2.rdfi = mc.rdfi AND be2.receiver_account = mc.receiver_account
-             AND h.status = 'declined'
-       ) AS has_declined
-FROM my_combos mc;
+SELECT mc.rdfi, mc.receiver_account, COALESCE(l.status, '') AS latest_status
+FROM my_combos mc
+LEFT JOIN latest l ON l.rdfi = mc.rdfi AND l.receiver_account = mc.receiver_account;
 
 -- name: SetHoldStatus :exec
 UPDATE holds SET status = $1, updated_at = NOW() WHERE id = $2;

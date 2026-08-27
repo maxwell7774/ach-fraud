@@ -288,11 +288,11 @@ func BuildCleaned(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 }
 
 // BuildRelease creates a file that moves the funds of pending/approved holds
-// from the holding account back to their original receivers. releaseDate is the
-// effective entry date for the release batches (YYMMDD), supplied by the caller
-// so this package stays free of wall-clock time. It returns nil when there is
+// from the holding account back to their original receivers. The release batch
+// keeps the effective entry date from the original file so the money releases
+// on the receiver's intended settlement date. It returns nil when there is
 // nothing to release, along with the hold IDs covered by the release legs.
-func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy, releaseDate string) (*ach.File, int, []uuid.UUID, error) {
+func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.File, int, []uuid.UUID, error) {
 	type releaseGroup struct {
 		header *ach.BatchHeader
 		legs   []HeldEntry
@@ -327,10 +327,10 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy, releas
 		g := groups[header]
 		// Preserve the original batch header; only the release's own
 		// characteristics change: the money originates from the holding
-		// account on the release date.
+		// account, but it keeps the original file's effective entry date.
 		bh := *g.header
 		bh.ODFIIdentification = policy.HoldingRDFI[:8]
-		bh.EffectiveEntryDate = releaseDate
+		bh.EffectiveEntryDate = g.header.EffectiveEntryDate
 		bh.BatchNumber = 0
 
 		batch, err := ach.NewBatch(&bh)

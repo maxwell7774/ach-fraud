@@ -2,7 +2,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { createAsync, useSearchParams, useAction, useSubmission, A, revalidate } from "@solidjs/router";
 import { api, dollars, fmtDate, human } from "../api";
 import type { Hold, HoldDetail } from "../api";
-import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading, PageHeader, QueryError } from "../components";
+import { Badge, Pagination, RowActions, SortableTh, DatePicker, EmptyState, Loading, PageHeader, QueryError, Select } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
 import { canReview } from "../user";
@@ -75,6 +75,7 @@ export default function Holds() {
   const decline = useAction(declineHoldAction);
   const bulk = useAction(bulkHoldAction);
   const bulkSub = useSubmission(bulkHoldAction);
+  const [bulkStatus, setBulkStatus] = createSignal("");
 
   function setStatus(s: string) {
     setParams({ status: s === "" ? "all" : s });
@@ -192,6 +193,31 @@ export default function Holds() {
     setSelected(new Set<string>());
   }
 
+  async function actBulkStatus() {
+    const status = bulkStatus();
+    if (!status) return;
+    const ids = [...selected()];
+    if (ids.length === 0) return;
+    const selectedHolds = rows().filter((h) => selected().has(h.id));
+    const accounts = [...new Set(selectedHolds.map((h) => h.entry_receiver_account))];
+    const msg = `Set the status of the ${ids.length} selected holds to ${human(status)}?\n\nThis only updates the record and how future files to these receivers are screened — it does not change any transmitted file. Each selected hold may override its entire velocity group.\nAccounts: ${accounts.join(", ")}`;
+    const res = await confirm(msg, {
+      title: `Set status: ${human(status)}`,
+      tone: status === "approved" ? "approve" : status === "declined" || status === "auto_declined" ? "decline" : "neutral",
+      confirmLabel: "Set status",
+      showNote: true,
+    });
+    if (!res.ok) return;
+    const result = await bulk({ action: "set_status", ids, note: res.note, status });
+    if (!result.ok) {
+      flash("error", result.error ?? "failed");
+      return;
+    }
+    flash("success", `Set ${result.count} hold${result.count === 1 ? "" : "s"} to ${human(status)} (including any linked velocity-group members)`);
+    setBulkStatus("");
+    setSelected(new Set<string>());
+  }
+
   return (
     <>
       <PageHeader remaining={remaining}>
@@ -279,6 +305,24 @@ export default function Holds() {
                 onClick={() => actBulk("decline")}
               >
                 Decline
+              </button>
+              <Select
+                value={bulkStatus()}
+                options={[
+                  { value: "", label: "Set status…" },
+                  { value: "approved", label: "Approved" },
+                  { value: "declined", label: "Declined" },
+                  { value: "auto_declined", label: "Auto declined" },
+                  { value: "pending", label: "Pending" },
+                ]}
+                onChange={setBulkStatus}
+              />
+              <button
+                class="btn btn-sm"
+                disabled={bulkSub.pending || !bulkStatus()}
+                onClick={actBulkStatus}
+              >
+                Apply
               </button>
             </div>
           </Show>

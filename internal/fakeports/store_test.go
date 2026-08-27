@@ -112,10 +112,10 @@ func TestListCombosBySubmission(t *testing.T) {
 	for _, c := range combos {
 		byAcct[c.ReceiverAccount] = c
 	}
-	if !byAcct["acct1"].HasApproved || byAcct["acct1"].HasDeclined {
-		t.Fatalf("acct1 should be whitelisted (approved, not declined): %+v", byAcct["acct1"])
+	if byAcct["acct1"].LatestStatus != "approved" {
+		t.Fatalf("acct1 should be whitelisted (approved): %+v", byAcct["acct1"])
 	}
-	if byAcct["acct2"].HasApproved || !byAcct["acct2"].HasDeclined {
+	if byAcct["acct2"].LatestStatus != "declined" {
 		t.Fatalf("acct2 should be blacklisted (declined): %+v", byAcct["acct2"])
 	}
 }

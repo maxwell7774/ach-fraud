@@ -111,6 +111,14 @@ func toUUID(p pgtype.UUID) uuid.UUID {
 	return uuid.UUID(p.Bytes)
 }
 
+func toUUIDPtr(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	u := uuid.UUID(p.Bytes)
+	return &u
+}
+
 func toPgUUID(u uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: u, Valid: true}
 }

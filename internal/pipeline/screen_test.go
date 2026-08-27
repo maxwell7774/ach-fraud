@@ -310,6 +310,79 @@ func TestScreenAutoDeclined(t *testing.T) {
 	}
 }
 
+// TestScreenLatestStatusDeclines: a combo whose most-recently-updated hold is
+// declined (e.g. an approved hold later overridden to declined) is treated as
+// blacklisted, so a new high-value entry to it is auto-declined.
+func TestScreenLatestStatusDeclines(t *testing.T) {
+	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	d, st := screenDeps(t, now)
+	clk := d.Clock.(*fakeports.Clock)
+	sub := seedSubmission(t, st, "a.ach", now)
+	other := seedSubmission(t, st, "b.ach", now)
+	entry := seedEntry(t, st, other, account1, 200000, now.AddDate(0, 0, -1))
+	if _, err := st.CreateHold(context.Background(), entry, domain.HoldApproved, ""); err != nil {
+		t.Fatalf("seed hold: %v", err)
+	}
+	// Later, a reviewer overrides the approved hold to declined.
+	clk.Set(now.Add(time.Hour))
+	if err := st.SetHoldStatus(context.Background(), entryHoldID(t, st, entry), domain.HoldDeclined); err != nil {
+		t.Fatalf("override: %v", err)
+	}
+	seedEntry(t, st, sub, account1, 200000, now.AddDate(0, 0, -2))
+
+	res, err := ScreenSubmission(context.Background(), d, sub)
+	if err != nil {
+		t.Fatalf("screen: %v", err)
+	}
+	if res.AutoDeclined != 1 || res.Pending != 0 {
+		t.Fatalf("expected latest-declined combo to be blacklisted (auto-declined), got %+v", res)
+	}
+}
+
+// TestScreenLatestStatusApproves: a combo whose most-recently-updated hold is
+// approved (e.g. a declined hold later overridden to approved) is treated as
+// whitelisted, so a new high-value entry to it passes without a hold.
+func TestScreenLatestStatusApproves(t *testing.T) {
+	now := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	d, st := screenDeps(t, now)
+	clk := d.Clock.(*fakeports.Clock)
+	sub := seedSubmission(t, st, "a.ach", now)
+	other := seedSubmission(t, st, "b.ach", now)
+	entry := seedEntry(t, st, other, account1, 200000, now.AddDate(0, 0, -1))
+	if _, err := st.CreateHold(context.Background(), entry, domain.HoldDeclined, ""); err != nil {
+		t.Fatalf("seed hold: %v", err)
+	}
+	clk.Set(now.Add(time.Hour))
+	if err := st.SetHoldStatus(context.Background(), entryHoldID(t, st, entry), domain.HoldApproved); err != nil {
+		t.Fatalf("override: %v", err)
+	}
+	seedEntry(t, st, sub, account1, 200000, now.AddDate(0, 0, -2))
+
+	res, err := ScreenSubmission(context.Background(), d, sub)
+	if err != nil {
+		t.Fatalf("screen: %v", err)
+	}
+	if res.Pending != 0 || res.AutoDeclined != 0 {
+		t.Fatalf("expected latest-approved combo to be whitelisted, got %+v", res)
+	}
+}
+
+// entryHoldID returns the hold ID for a given entry.
+func entryHoldID(t *testing.T, st *fakeports.Store, entryID uuid.UUID) uuid.UUID {
+	t.Helper()
+	holds, err := st.ListAllHolds(context.Background())
+	if err != nil {
+		t.Fatalf("list holds: %v", err)
+	}
+	for _, h := range holds {
+		if h.EntryID == entryID {
+			return h.ID
+		}
+	}
+	t.Fatalf("no hold for entry %s", entryID)
+	return uuid.UUID{}
+}
+
 // TestScreenVelocityHoldsWholeGroup: when a split group crosses the velocity
 // threshold, every eligible entry in the group is held — the combo skip must
 // not shadow it.

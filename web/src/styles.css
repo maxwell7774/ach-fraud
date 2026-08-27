@@ -552,6 +552,31 @@ tr:last-child td {
   gap: 8px;
   flex-wrap: wrap;
 }
+.btn-group input[type="text"],
+.btn-group input[type="search"] {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--btn-outline-border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+.select {
+  padding: 8px 12px;
+  border: 1px solid var(--btn-outline-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.825rem;
+}
+.override-row {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--card-border);
+}
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1076,6 +1101,61 @@ th.sort-desc .sort-icon {
 #confirmDlg.confirm-decline {
   border-top: 3px solid var(--declined-text);
 }
+#confirmDlg.confirm-neutral {
+  border-top: 3px solid var(--border);
+}
+.confirm-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 24px 18px;
+}
+.confirm-choices .choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+  background: var(--surface);
+}
+.confirm-choices .choice.selected {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+/* Custom radio: hide the native control and draw a square-ish ring with a
+   filled center dot when checked. */
+.confirm-choices .choice input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--btn-outline-border);
+  border-radius: 50%;
+  background: var(--surface);
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+}
+.confirm-choices .choice input[type="radio"]::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: scale(0);
+  transition: 120ms transform ease-in-out;
+  box-shadow: inset 1em 1em var(--gold);
+}
+.confirm-choices .choice input[type="radio"]:checked {
+  border-color: var(--gold);
+}
+.confirm-choices .choice input[type="radio"]:checked::before {
+  transform: scale(1);
+}
 .confirm-head {
   display: flex;
   align-items: center;
@@ -1441,6 +1521,7 @@ th.sort-desc .sort-icon {
   font-family: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  flex: none;
 }
 .custom-select:hover {
   background: var(--btn-outline-hover);
@@ -1449,6 +1530,7 @@ th.sort-desc .sort-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  margin-left: auto;
   color: var(--text-muted);
   font-size: 0.7rem;
 }

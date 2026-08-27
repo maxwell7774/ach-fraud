@@ -39,6 +39,14 @@ type bulkRequest struct {
 	IDs    []uuid.UUID `json:"ids"`
 	Note   string      `json:"note"`
 	Actor  string      `json:"actor"`
+	Status string      `json:"status"`
+}
+
+type statusRequest struct {
+	Status string `json:"status"`
+	Note   string `json:"note"`
+	Actor  string `json:"actor"`
+	Scope  string `json:"scope"`
 }
 
 type holdsPage struct {
@@ -94,8 +102,18 @@ func (s *Server) handleBulk(w http.ResponseWriter, r *http.Request) {
 		count, err = pipeline.ApproveHolds(r.Context(), s.deps, req.IDs, actor, req.Note)
 	case "decline":
 		count, err = pipeline.DeclineHolds(r.Context(), s.deps, req.IDs, actor, req.Note)
+	case "set_status":
+		if req.Status == "" {
+			writeErr(w, http.StatusBadRequest, errors.New("status is required"))
+			return
+		}
+		count, err = pipeline.OverrideHolds(r.Context(), s.deps, req.IDs, actor, req.Note, domain.HoldStatus(req.Status))
 	default:
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("unknown action %q", req.Action))
+		return
+	}
+	if errors.Is(err, pipeline.ErrInvalidHoldStatus) {
+		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 	if err != nil {
@@ -177,6 +195,45 @@ func (s *Server) handleDecline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "declined"})
+}
+
+// handleSetStatus lets a reviewer change a hold's status directly (e.g.
+// approved to declined) for record-keeping and future screening. It does not
+// re-run the file pipeline; the change is audited via a review and only affects
+// how later files to the same receiver pair are screened.
+func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	var req statusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(req.Note) > 2000 || len(req.Actor) > 200 {
+		writeErr(w, http.StatusBadRequest, errors.New("review field is too long"))
+		return
+	}
+	if req.Status == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("status is required"))
+		return
+	}
+	actor := s.reviewActor(r, req.Actor)
+	// Scope "hold" limits the change to this single hold; anything else (or
+	// absent) applies it to the whole velocity group, matching how approve and
+	// decline behave.
+	group := req.Scope != "hold"
+	if _, err := pipeline.OverrideHoldStatus(r.Context(), s.deps, id, actor, req.Note, domain.HoldStatus(req.Status), group); err != nil {
+		if errors.Is(err, pipeline.ErrInvalidHoldStatus) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": req.Status})
 }
 
 // holdVelocity reports the same-day group total for the hold's receiver

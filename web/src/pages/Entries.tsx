@@ -1,5 +1,5 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { createAsync, revalidate } from "@solidjs/router";
+import { createAsync, revalidate, A } from "@solidjs/router";
 import { entriesQuery } from "../queries";
 import { api, dollars, fmtDate } from "../api";
 import { EmptyState, Loading, Pagination, SortableTh, DatePicker, QueryError } from "../components";
@@ -93,7 +93,11 @@ export default function Entries() {
                 <For each={data()!.entries}>
                   {(e) => (
                     <tr>
-                      <td data-label="Trace">{e.trace}</td>
+                      <td data-label="Trace">
+                        <A href={`/entries/${e.id}`} class="file-link">
+                          {e.trace}
+                        </A>
+                      </td>
                       <td data-label="RDFI">{e.rdfi}</td>
                       <td data-label="Receiver">{e.receiver_name}</td>
                       <td data-label="Account">{e.receiver_account}</td>

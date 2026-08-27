@@ -81,8 +81,10 @@ func (s *Store) UpdateRecipient(ctx context.Context, r domain.Recipient) (domain
 	}
 	r.Email = row.Email
 	r.CreatedAt = row.CreatedAt.Time
-	if err := setRecipientAlerts(ctx, q, r.ID, r.AlertTypes); err != nil {
-		return domain.Recipient{}, err
+	if r.AlertTypes != nil {
+		if err := setRecipientAlerts(ctx, q, r.ID, r.AlertTypes); err != nil {
+			return domain.Recipient{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.Recipient{}, err

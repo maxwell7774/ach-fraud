@@ -255,7 +255,7 @@ func TestMatchHoldsAndCleaned(t *testing.T) {
 		t.Fatalf("amounts changed")
 	}
 
-	release, legs, ids, err := BuildRelease(f, held, policy, "260101")
+	release, legs, ids, err := BuildRelease(f, held, policy)
 	if err != nil {
 		t.Fatalf("release: %v", err)
 	}
@@ -277,10 +277,13 @@ func TestMatchHoldsAndCleaned(t *testing.T) {
 // the original description; only the ODFI (holding account) and effective date
 // differ from the source file.
 func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
-	data := mustCredit(t, []testutil.Entry{
+	data, err := testutil.CreditFile([]testutil.Entry{
 		{Account: "111111", Name: "Jane Doe", Identification: "123456789", Amount: 200000, RDFI: "231380104", Trace: 1},
 		{Account: "222222", Name: "B", Amount: 5000, RDFI: "231380104", Trace: 2},
-	})
+	}, "260215")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
 	f := read(t, data)
 	trace0 := f.Batches[0].GetEntries()[0].TraceNumberField()
 	held, err := MatchHolds(f, []domain.Hold{
@@ -290,7 +293,7 @@ func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
 		t.Fatalf("match: %v", err)
 	}
 
-	release, legs, _, err := BuildRelease(f, held, policy, "260101")
+	release, legs, _, err := BuildRelease(f, held, policy)
 	if err != nil {
 		t.Fatalf("release: %v", err)
 	}
@@ -310,8 +313,8 @@ func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
 	if rh.ODFIIdentification != policy.HoldingRDFI[:8] {
 		t.Fatalf("ODFI = %s, want holding rdfi", rh.ODFIIdentification)
 	}
-	if rh.EffectiveEntryDate != "260101" {
-		t.Fatalf("effective date = %q, want release date", rh.EffectiveEntryDate)
+	if rh.EffectiveEntryDate != "260215" {
+		t.Fatalf("effective date = %q, want original file date 260215", rh.EffectiveEntryDate)
 	}
 
 	leg := release.Batches[0].GetEntries()[0]
@@ -396,7 +399,7 @@ func TestVerifyConsistencyDetectsMismatch(t *testing.T) {
 		t.Fatalf("cleaned: %v", err)
 	}
 	// A release that moves the money to the wrong account must be rejected.
-	wrongRelease, _, _, err := BuildRelease(f, held, policy, "260101")
+	wrongRelease, _, _, err := BuildRelease(f, held, policy)
 	if err != nil {
 		t.Fatalf("release: %v", err)
 	}
@@ -453,7 +456,7 @@ func TestVerifyReleaseRejectsWrongSender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("match: %v", err)
 	}
-	release, legs, _, err := BuildRelease(f, held, policy, "260101")
+	release, legs, _, err := BuildRelease(f, held, policy)
 	if err != nil {
 		t.Fatalf("release: %v", err)
 	}

@@ -17,6 +17,7 @@ export const verifyQuery = query(
   "verify"
 );
 export const entriesQuery = query((p: ListParams) => api.entries(p), "entries");
+export const entryQuery = query((id: string) => api.entry(id), "entry");
 export const headersQuery = query((p: ListParams) => api.headers(p), "headers");
 export const eventsQuery = query((p: ListParams) => api.events(p), "events");
 export const jobsQuery = query((p: ListParams) => api.jobs(p), "jobs");
@@ -44,15 +45,39 @@ export const declineHoldAction = action(async (args: { id: string; note: string 
 }, "declineHold");
 
 export const bulkHoldAction = action(
-  async (args: { action: "approve" | "decline"; ids: string[]; note: string }) => {
+  async (args: { action: "approve" | "decline" | "set_status"; ids: string[]; note: string; status?: string }) => {
     try {
-      const res = await api.bulk(args.action, args.ids, { note: args.note, actor: "" });
+      const res = await api.bulk(args.action, args.ids, { note: args.note, actor: "" }, args.status);
       return { ok: true as const, count: res.count };
     } catch (e) {
       return { ok: false as const, error: String(e) };
     }
   },
   "bulkHold"
+);
+
+export const setStatusHoldAction = action(
+  async (args: { id: string; status: string; note: string; scope?: string }) => {
+    try {
+      await api.setStatus(args.id, { status: args.status, note: args.note, actor: "", scope: args.scope });
+      return { ok: true as const };
+    } catch (e) {
+      return { ok: false as const, error: String(e) };
+    }
+  },
+  "setStatusHold"
+);
+
+export const createEntryHoldAction = action(
+  async (args: { id: string; status: string; reason: string }) => {
+    try {
+      const res = await api.createEntryHold(args.id, { status: args.status, reason: args.reason, actor: "" });
+      return { ok: true as const, holdId: res.id };
+    } catch (e) {
+      return { ok: false as const, error: String(e) };
+    }
+  },
+  "createEntryHold"
 );
 
 export const logoutAction = action(async () => {

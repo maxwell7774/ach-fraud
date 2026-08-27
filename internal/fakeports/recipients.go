@@ -47,7 +47,9 @@ func (s *Store) UpdateRecipient(ctx context.Context, r domain.Recipient) (domain
 	existing.Name = r.Name
 	existing.Email = r.Email
 	existing.Enabled = r.Enabled
-	existing.AlertTypes = r.AlertTypes
+	if r.AlertTypes != nil {
+		existing.AlertTypes = r.AlertTypes
+	}
 	s.recips[r.ID] = existing
 	return existing, nil
 }

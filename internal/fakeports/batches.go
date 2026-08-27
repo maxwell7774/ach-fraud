@@ -57,6 +57,33 @@ func (s *Store) HasEntryByRdfiAccount(ctx context.Context, rdfi, account string)
 	return false, nil
 }
 
+func (s *Store) GetEntryByID(ctx context.Context, entryID uuid.UUID) (domain.BatchEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[entryID]
+	if !ok {
+		return domain.BatchEntry{}, domain.ErrNotFound
+	}
+	if hdr, ok := s.headers[e.HeaderID]; ok {
+		e.EffectiveDate = hdr.EffectiveDate
+		e.CustomerID = hdr.CustomerID
+		e.SubmissionID = hdr.SubmissionID.String()
+		if sub, ok := s.subs[hdr.SubmissionID]; ok {
+			e.Filename = sub.Filename
+		}
+	}
+	for _, h := range s.holds {
+		if h.EntryID == entryID {
+			id := h.ID
+			status := h.Status
+			e.HoldID = &id
+			e.HoldStatus = &status
+			break
+		}
+	}
+	return e, nil
+}
+
 func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID uuid.UUID) ([]domain.VelocitySum, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -71,7 +98,7 @@ func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID 
 		if e.TranCode != 22 && e.TranCode != 32 {
 			continue
 		}
-		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Truncate(24*time.Hour).Before(cutoff.Truncate(24*time.Hour)) {
 			continue
 		}
 		targets[velocityKeyFor(e.ReceiverAccount, e.Rdfi, hdr.CustomerID, hdr.EffectiveDate)] = true
@@ -92,7 +119,7 @@ func (s *Store) SumVelocity(ctx context.Context, cutoff time.Time, submissionID 
 		if e.TranCode != 22 && e.TranCode != 32 {
 			continue
 		}
-		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Truncate(24*time.Hour).Before(cutoff.Truncate(24*time.Hour)) {
 			continue
 		}
 		key := velocityKeyFor(e.ReceiverAccount, e.Rdfi, hdr.CustomerID, hdr.EffectiveDate)
@@ -133,7 +160,7 @@ func (s *Store) SumHeldByGroup(ctx context.Context, cutoff time.Time, submission
 		if e.TranCode != 22 && e.TranCode != 32 {
 			continue
 		}
-		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Truncate(24*time.Hour).Before(cutoff.Truncate(24*time.Hour)) {
 			continue
 		}
 		targets[velocityKeyFor(e.ReceiverAccount, e.Rdfi, hdr.CustomerID, hdr.EffectiveDate)] = true
@@ -162,7 +189,7 @@ func (s *Store) SumHeldByGroup(ctx context.Context, cutoff time.Time, submission
 		if en.TranCode != 22 && en.TranCode != 32 {
 			continue
 		}
-		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Before(cutoff) {
+		if hdr.EffectiveDate == nil || hdr.EffectiveDate.Truncate(24*time.Hour).Before(cutoff.Truncate(24*time.Hour)) {
 			continue
 		}
 		key := velocityKeyFor(en.ReceiverAccount, en.Rdfi, hdr.CustomerID, hdr.EffectiveDate)
