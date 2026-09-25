@@ -262,9 +262,22 @@ func TestMatchHoldsAndCleaned(t *testing.T) {
 	if release == nil || legs != 1 || len(ids) != 1 {
 		t.Fatalf("expected 1 release leg, got legs=%d ids=%d", legs, len(ids))
 	}
+	if got := TotalEntries(release); got != 2 {
+		t.Fatalf("expected 2 release entries (credit + summary debit), got %d", got)
+	}
+	if sc := release.Batches[0].GetHeader().ServiceClassCode; sc != ach.MixedDebitsAndCredits {
+		t.Fatalf("service class = %d, want mixed %d", sc, ach.MixedDebitsAndCredits)
+	}
 	leg := release.Batches[0].GetEntries()[0]
 	if leg.RDFIIdentification+leg.CheckDigit != "231380104" || leg.DFIAccountNumber != "111111" || leg.Amount != 200000 {
 		t.Fatalf("release leg wrong: %s %s %d", leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.Amount)
+	}
+	debit := release.Batches[0].GetEntries()[1]
+	if debit.RDFIIdentification+debit.CheckDigit != "333333334" || debit.DFIAccountNumber != "555555" || debit.Amount != 200000 {
+		t.Fatalf("offset debit wrong: %s %s %d", debit.RDFIIdentification+debit.CheckDigit, debit.DFIAccountNumber, debit.Amount)
+	}
+	if debit.CreditOrDebit() != "D" {
+		t.Fatalf("offset leg tran %d is not a debit", debit.TransactionCode)
 	}
 
 	if err := VerifyConsistency(f, cleaned, release, held, policy); err != nil {
@@ -272,10 +285,11 @@ func TestMatchHoldsAndCleaned(t *testing.T) {
 	}
 }
 
-// TestBuildReleasePreservesEntryAndHeader: the release leg keeps the original
-// entry's tax id/SSN, name, and discretionary data, and the batch header keeps
-// the original description; only the ODFI (holding account) and effective date
-// differ from the source file.
+// TestBuildReleasePreservesEntryAndHeader: the release credit legs keep the
+// original entry's tax id/SSN, name, and discretionary data, and the batch
+// header keeps the original description; only the ODFI (holding account) and
+// effective date differ from the source file. A single summary debit pulls
+// the batch total out of the holding account so the mixed batch nets to zero.
 func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
 	data, err := testutil.CreditFile([]testutil.Entry{
 		{Account: "111111", Name: "Jane Doe", Identification: "123456789", Amount: 200000, RDFI: "231380104", Trace: 1},
@@ -299,6 +313,9 @@ func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
 	}
 	if release == nil || legs != 1 {
 		t.Fatalf("expected 1 release leg, got %d", legs)
+	}
+	if got := TotalEntries(release); got != 2 {
+		t.Fatalf("expected 2 release entries (credit + summary debit), got %d", got)
 	}
 
 	src := f.Batches[0].GetHeader()
@@ -326,6 +343,13 @@ func TestBuildReleasePreservesEntryAndHeader(t *testing.T) {
 	}
 	if leg.RDFIIdentification+leg.CheckDigit != "231380104" || leg.DFIAccountNumber != "111111" || leg.Amount != 200000 {
 		t.Fatalf("release leg wrong: %s %s %d", leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.Amount)
+	}
+	debit := release.Batches[0].GetEntries()[1]
+	if debit.RDFIIdentification+debit.CheckDigit != policy.HoldingRDFI || debit.DFIAccountNumber != policy.HoldingAccount || debit.Amount != 200000 {
+		t.Fatalf("offset debit wrong: %s %s %d", debit.RDFIIdentification+debit.CheckDigit, debit.DFIAccountNumber, debit.Amount)
+	}
+	if debit.CreditOrDebit() != "D" {
+		t.Fatalf("offset leg tran %d is not a debit", debit.TransactionCode)
 	}
 
 	if err := VerifyRelease(release, held, policy); err != nil {
@@ -466,6 +490,118 @@ func TestVerifyReleaseRejectsWrongSender(t *testing.T) {
 	release.Batches[0].GetHeader().CompanyIdentification = "wrong-sender"
 	if err := VerifyRelease(release, held, policy); err == nil || !strings.Contains(err.Error(), "source batch") {
 		t.Fatalf("expected source-header mismatch, got %v", err)
+	}
+}
+
+// TestBuildReleaseBalancesWithOffsetDebit: the credits go to the receivers
+// plus a single summary debit to the holding account, the batch is mixed and
+// balanced, and dropping the debit fails verification.
+func TestBuildReleaseBalancesWithOffsetDebit(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "A", Amount: 200000, RDFI: "231380104", Trace: 1},
+	})
+	f := read(t, data)
+	trace0 := f.Batches[0].GetEntries()[0].TraceNumberField()
+	held, err := MatchHolds(f, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: trace0, EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldPending},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	release, legs, _, err := BuildRelease(f, held, policy)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if legs != 1 || TotalEntries(release) != 2 {
+		t.Fatalf("expected 1 hold / 2 entries, got legs=%d entries=%d", legs, TotalEntries(release))
+	}
+	var debits, credits, debitLegs int
+	for _, e := range release.Batches[0].GetEntries() {
+		switch e.CreditOrDebit() {
+		case "D":
+			debitLegs++
+			debits += e.Amount
+			if e.RDFIIdentification+e.CheckDigit != policy.HoldingRDFI || e.DFIAccountNumber != policy.HoldingAccount {
+				t.Fatalf("debit targets %s %s, want holding", e.RDFIIdentification+e.CheckDigit, e.DFIAccountNumber)
+			}
+			if e.TransactionCode != ach.CheckingDebit {
+				t.Fatalf("debit tran = %d, want %d", e.TransactionCode, ach.CheckingDebit)
+			}
+		default:
+			credits += e.Amount
+		}
+	}
+	if debitLegs != 1 {
+		t.Fatalf("debit legs = %d, want exactly 1 summary debit", debitLegs)
+	}
+	if debits != 200000 || credits != 200000 {
+		t.Fatalf("debits=%d credits=%d, want 200000 each", debits, credits)
+	}
+	// A release stripped of its offset debit must not verify.
+	stripped, _, _, err := BuildRelease(f, held, policy)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	stripped.Batches[0].GetHeader().ServiceClassCode = ach.CreditsOnly
+	kept := stripped.Batches[0].GetEntries()[0]
+	stripped.Batches[0].GetEntries()[0] = kept
+	// Simulate the strip by truncating to the credit leg only.
+	bh := *stripped.Batches[0].GetHeader()
+	nb, err := ach.NewBatch(&bh)
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	nb.SetValidation(stripped.GetValidation())
+	nb.AddEntry(kept)
+	if err := nb.Create(); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	stripped.Batches[0] = nb
+	if err := VerifyRelease(stripped, held, policy); err == nil {
+		t.Fatal("expected a missing offset debit to fail verification")
+	}
+}
+
+// TestBuildReleaseSumsOneDebitPerBatch: two holds in one batch yield two
+// credits plus a single summary debit for their total.
+func TestBuildReleaseSumsOneDebitPerBatch(t *testing.T) {
+	data := mustCredit(t, []testutil.Entry{
+		{Account: "111111", Name: "A", Amount: 200000, RDFI: "231380104", Trace: 1},
+		{Account: "222222", Name: "B", Amount: 50000, RDFI: "231380104", Trace: 2},
+	})
+	f := read(t, data)
+	entries := f.Batches[0].GetEntries()
+	held, err := MatchHolds(f, []domain.Hold{
+		{ID: uuid.New(), EntryTrace: entries[0].TraceNumberField(), EntryRdfi: "231380104", EntryReceiverAcct: "111111", EntryAmount: 200000, Status: domain.HoldPending},
+		{ID: uuid.New(), EntryTrace: entries[1].TraceNumberField(), EntryRdfi: "231380104", EntryReceiverAcct: "222222", EntryAmount: 50000, Status: domain.HoldPending},
+	})
+	if err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	release, legs, _, err := BuildRelease(f, held, policy)
+	if err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if legs != 2 || TotalEntries(release) != 3 {
+		t.Fatalf("expected 2 holds / 3 entries, got legs=%d entries=%d", legs, TotalEntries(release))
+	}
+	var debits, credits, debitLegs int
+	for _, e := range release.Batches[0].GetEntries() {
+		if e.CreditOrDebit() == "D" {
+			debitLegs++
+			debits += e.Amount
+			if e.Amount != 250000 {
+				t.Fatalf("summary debit = %d, want 250000", e.Amount)
+			}
+		} else {
+			credits += e.Amount
+		}
+	}
+	if debitLegs != 1 || debits != 250000 || credits != 250000 {
+		t.Fatalf("debitLegs=%d debits=%d credits=%d, want 1/250000/250000", debitLegs, debits, credits)
+	}
+	if err := VerifyRelease(release, held, policy); err != nil {
+		t.Fatalf("verify: %v", err)
 	}
 }
 

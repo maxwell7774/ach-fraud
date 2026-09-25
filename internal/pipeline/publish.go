@@ -87,8 +87,8 @@ func PublishRelease(ctx context.Context, d Deps, releaseID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if legs := achp.TotalEntries(file); legs != len(holds) {
-		return fmt.Errorf("release file has %d legs but %d linked holds", legs, len(holds))
+	if legs := achp.TotalEntries(file); legs != len(holds)+len(file.Batches) {
+		return fmt.Errorf("release file has %d entries but %d linked holds in %d batches (want credits + one summary debit per batch)", legs, len(holds), len(file.Batches))
 	}
 
 	// Bring the cleaned intercept along.

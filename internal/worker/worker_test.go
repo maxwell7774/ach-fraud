@@ -274,8 +274,8 @@ func TestRunPerGroupReleases(t *testing.T) {
 	}
 	counts := []int{legs(releases[0]), legs(releases[1])}
 	sort.Ints(counts)
-	if counts[0] != 1 || counts[1] != 2 {
-		t.Fatalf("expected release legs 1 and 2, got %v", counts)
+	if counts[0] != 2 || counts[1] != 3 {
+		t.Fatalf("expected release entries 2 and 3 (credits + one summary debit per batch), got %v", counts)
 	}
 
 	var soloHold *domain.Hold

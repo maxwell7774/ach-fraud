@@ -287,11 +287,19 @@ func BuildCleaned(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 	})
 }
 
-// BuildRelease creates a file that moves the funds of pending/approved holds
-// from the holding account back to their original receivers. The release batch
-// keeps the effective entry date from the original file so the money releases
-// on the receiver's intended settlement date. It returns nil when there is
-// nothing to release, along with the hold IDs covered by the release legs.
+// BuildRelease creates a balanced file that moves the funds of
+// pending/approved holds from the holding account to their original receivers.
+// The release batch keeps the effective entry date from the original file so
+// the money releases on the receiver's intended settlement date.
+//
+// Each batch carries the credit legs plus a single summary debit to the
+// holding account for their total, so the batch nets to zero for the
+// originator: the sender is debited and re-credited, the holding account funds
+// the payout, and the receivers are credited. The credit legs are left
+// untouched so the receiver's view never changes. It returns nil when there is
+// nothing to release, along with the hold IDs covered by the release legs; the
+// returned leg count is the number of holds (credit legs), while the file
+// itself carries one extra summary debit entry per batch.
 func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.File, int, []uuid.UUID, error) {
 	type releaseGroup struct {
 		header *ach.BatchHeader
@@ -314,6 +322,12 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 	if len(order) == 0 {
 		return nil, 0, nil, nil
 	}
+	if len(policy.HoldingRDFI) != 9 {
+		return nil, 0, nil, fmt.Errorf("holding_rdfi must be 9 digits, got %q", policy.HoldingRDFI)
+	}
+	if policy.HoldingAccount == "" {
+		return nil, 0, nil, fmt.Errorf("holding_account is not configured")
+	}
 
 	out := ach.NewFile()
 	hdr := file.Header
@@ -332,6 +346,9 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 		bh.ODFIIdentification = policy.HoldingRDFI[:8]
 		bh.EffectiveEntryDate = g.header.EffectiveEntryDate
 		bh.BatchNumber = 0
+		// The batch carries credits plus one summary debit, so it must be
+		// mixed; a credits-only batch would reject the debit leg.
+		bh.ServiceClassCode = ach.MixedDebitsAndCredits
 
 		batch, err := ach.NewBatch(&bh)
 		if err != nil {
@@ -363,6 +380,38 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 			ids = append(ids, hr.Hold.ID)
 			legs++
 		}
+		// Single summary debit: pull the batch's credit total out of the
+		// holding account so the batch nets to zero for the originator. The
+		// tran code mirrors the first credit leg; when a batch mixes account
+		// types this is only a funding entry, so an exact per-leg mirror is
+		// not required. The summary carries no tax id/SSN since it funds
+		// several receivers at once.
+		batchTotal := 0
+		for _, hr := range g.legs {
+			batchTotal += hr.OrigAmount
+		}
+		debitCode, err := offsetDebitCode(g.legs[0].OrigTranCode)
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("hold %s: %w", g.legs[0].Hold.ID, err)
+		}
+		d := *g.legs[0].Entry
+		d.RDFIIdentification = policy.HoldingRDFI[:8]
+		d.CheckDigit = string(policy.HoldingRDFI[8])
+		d.DFIAccountNumber = policy.HoldingAccount
+		d.IndividualName = "HOLDING"
+		d.IdentificationNumber = ""
+		d.Amount = batchTotal
+		d.TransactionCode = debitCode
+		d.TraceNumber = ""
+		d.Addenda02 = nil
+		d.Addenda05 = nil
+		d.Addenda98 = nil
+		d.Addenda98Refused = nil
+		d.Addenda99 = nil
+		d.Addenda99Contested = nil
+		d.Addenda99Dishonored = nil
+		d.AddendaRecordIndicator = 0
+		batch.AddEntry(&d)
 		if err := batch.Create(); err != nil {
 			return nil, 0, nil, fmt.Errorf("creating release batch: %w", err)
 		}
@@ -429,10 +478,31 @@ func VerifyConsistency(fixed, cleaned, release *ach.File, held []HeldEntry, poli
 	return nil
 }
 
+// offsetDebitCode maps a credit tran code to the debit code that pulls the
+// same account type back out of the holding account.
+func offsetDebitCode(tran int) (int, error) {
+	switch tran {
+	case ach.CheckingCredit:
+		return ach.CheckingDebit, nil
+	case ach.CheckingPrenoteCredit:
+		return ach.CheckingPrenoteDebit, nil
+	case ach.SavingsCredit:
+		return ach.SavingsDebit, nil
+	case ach.SavingsPrenoteCredit:
+		return ach.SavingsPrenoteDebit, nil
+	case ach.GLCredit:
+		return ach.GLDebit, nil
+	default:
+		return 0, fmt.Errorf("cannot offset non-credit tran code %d", tran)
+	}
+}
+
 // VerifyRelease confirms a release file carries exactly the legs for the held
-// entries it was built from: one leg per pending/approved hold, each moving the
-// exact amount back to the original receiver account/RDFI with its tax id/SSN
-// and a preserved batch header description, with totals equal.
+// entries it was built from: one credit leg per pending/approved hold moving
+// the exact amount back to the original receiver account/RDFI with its tax
+// id/SSN and a preserved batch header description, plus one summary debit leg
+// per batch pulling the batch's credit total out of the holding account, with
+// the file balanced (total debits == total credits == held total).
 func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) error {
 	if release.Header.ImmediateOrigin != policy.HoldingRDFI {
 		return fmt.Errorf("release file origin %s != holding rdfi %s", release.Header.ImmediateOrigin, policy.HoldingRDFI)
@@ -451,30 +521,54 @@ func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) er
 			srcHeaders[releaseHeaderKey(hr.Header)] = true
 		}
 	}
-	relTotal := 0
+	creditTotal, debitTotal := 0, 0
 	for _, b := range release.Batches {
 		if b.GetHeader().ODFIIdentification != policy.HoldingRDFI[:8] {
 			return fmt.Errorf("release batch ODFI %s != holding rdfi %s", b.GetHeader().ODFIIdentification, policy.HoldingRDFI[:8])
 		}
+		if b.GetHeader().ServiceClassCode != ach.MixedDebitsAndCredits {
+			return fmt.Errorf("release batch service class %d != mixed debits and credits %d", b.GetHeader().ServiceClassCode, ach.MixedDebitsAndCredits)
+		}
 		if !srcHeaders[releaseHeaderKey(b.GetHeader())] {
 			return fmt.Errorf("release batch header does not match a source batch header")
 		}
+		batchCredits, batchDebits, debitLegs := 0, 0, 0
 		for _, leg := range b.GetEntries() {
-			key := fmt.Sprintf("%d|%s|%s|%s", leg.Amount, leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.IdentificationNumber)
-			if expected[key] == 0 {
-				return fmt.Errorf("release has an unexpected leg for %s", key)
+			switch leg.CreditOrDebit() {
+			case "D":
+				if leg.RDFIIdentification+leg.CheckDigit != policy.HoldingRDFI || leg.DFIAccountNumber != policy.HoldingAccount {
+					return fmt.Errorf("release debit leg targets %s %s, want holding %s %s", leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, policy.HoldingRDFI, policy.HoldingAccount)
+				}
+				debitLegs++
+				batchDebits += leg.Amount
+			default:
+				key := fmt.Sprintf("%d|%s|%s|%s", leg.Amount, leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, leg.IdentificationNumber)
+				if expected[key] == 0 {
+					return fmt.Errorf("release has an unexpected leg for %s", key)
+				}
+				expected[key]--
+				batchCredits += leg.Amount
 			}
-			expected[key]--
-			relTotal += leg.Amount
 		}
+		if debitLegs != 1 {
+			return fmt.Errorf("release batch has %d debit legs, want exactly 1 summary debit", debitLegs)
+		}
+		if batchDebits != batchCredits {
+			return fmt.Errorf("release batch debit %d != batch credit %d", batchDebits, batchCredits)
+		}
+		creditTotal += batchCredits
+		debitTotal += batchDebits
 	}
 	for key, n := range expected {
 		if n > 0 {
 			return fmt.Errorf("release is missing %d leg(s) for %s", n, key)
 		}
 	}
-	if relTotal != expTotal {
-		return fmt.Errorf("release total %d != held total %d", relTotal, expTotal)
+	if creditTotal != expTotal {
+		return fmt.Errorf("release credit total %d != held total %d", creditTotal, expTotal)
+	}
+	if debitTotal != expTotal {
+		return fmt.Errorf("release debit total %d != held total %d", debitTotal, expTotal)
 	}
 	return nil
 }
