@@ -452,6 +452,13 @@ tr:last-child td {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Sub-lines inside detail grids (e.g. verification debit/credit splits)
+   wrap instead of truncating like their table counterparts above. */
+.detail-grid .cell-sub {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+}
 
 /* Status badges */
 .badge {
