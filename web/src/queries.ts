@@ -18,7 +18,6 @@ export const verifyQuery = query(
 );
 export const entriesQuery = query((p: ListParams) => api.entries(p), "entries");
 export const entryQuery = query((id: string) => api.entry(id), "entry");
-export const headersQuery = query((p: ListParams) => api.headers(p), "headers");
 export const eventsQuery = query((p: ListParams) => api.events(p), "events");
 export const jobsQuery = query((p: ListParams) => api.jobs(p), "jobs");
 export const recipientsQuery = query(() => api.recipients(), "recipients");

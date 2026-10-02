@@ -263,7 +263,9 @@ func VerifySame(original, fixed *ach.File) error {
 // RDFI and rebuilds the file. The input file is left pristine: held entries are
 // copied, the redirect is applied to the copies, and non-held entries are
 // carried through untouched. All entries keep their amounts; the money just
-// stops at the holding account instead of reaching the receiver.
+// stops at the holding account instead of reaching the receiver. The holding
+// account is a checking account, so redirected entries always carry the
+// checking-credit tran code (22) regardless of the original account type.
 func BuildCleaned(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.File, error) {
 	if len(policy.HoldingRDFI) != 9 {
 		return nil, fmt.Errorf("holding_rdfi must be 9 digits, got %q", policy.HoldingRDFI)
@@ -283,6 +285,7 @@ func BuildCleaned(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 		cp.RDFIIdentification = policy.HoldingRDFI[:8]
 		cp.CheckDigit = string(policy.HoldingRDFI[8])
 		cp.DFIAccountNumber = policy.HoldingAccount
+		cp.TransactionCode = ach.CheckingCredit
 		return &cp
 	})
 }
@@ -382,17 +385,13 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 		}
 		// Single summary debit: pull the batch's credit total out of the
 		// holding account so the batch nets to zero for the originator. The
-		// tran code mirrors the first credit leg; when a batch mixes account
-		// types this is only a funding entry, so an exact per-leg mirror is
-		// not required. The summary carries no tax id/SSN since it funds
+		// holding account is a checking account, so the debit always carries
+		// the checking-debit tran code (27) regardless of the credit legs'
+		// account types. The summary carries no tax id/SSN since it funds
 		// several receivers at once.
 		batchTotal := 0
 		for _, hr := range g.legs {
 			batchTotal += hr.OrigAmount
-		}
-		debitCode, err := offsetDebitCode(g.legs[0].OrigTranCode)
-		if err != nil {
-			return nil, 0, nil, fmt.Errorf("hold %s: %w", g.legs[0].Hold.ID, err)
 		}
 		d := *g.legs[0].Entry
 		d.RDFIIdentification = policy.HoldingRDFI[:8]
@@ -401,7 +400,7 @@ func BuildRelease(file *ach.File, held []HeldEntry, policy domain.Policy) (*ach.
 		d.IndividualName = "HOLDING"
 		d.IdentificationNumber = ""
 		d.Amount = batchTotal
-		d.TransactionCode = debitCode
+		d.TransactionCode = ach.CheckingDebit
 		d.TraceNumber = ""
 		d.Addenda02 = nil
 		d.Addenda05 = nil
@@ -459,6 +458,9 @@ func VerifyConsistency(fixed, cleaned, release *ach.File, held []HeldEntry, poli
 				if ce[ei].RDFIIdentification+ce[ei].CheckDigit != policy.HoldingRDFI || ce[ei].DFIAccountNumber != policy.HoldingAccount {
 					return fmt.Errorf("batch %d entry %d: held entry not redirected to the holding account", bi+1, ei+1)
 				}
+				if ce[ei].TransactionCode != ach.CheckingCredit {
+					return fmt.Errorf("batch %d entry %d: redirected tran %d != checking credit %d", bi+1, ei+1, ce[ei].TransactionCode, ach.CheckingCredit)
+				}
 			} else if ce[ei].RDFIIdentification != fe[ei].RDFIIdentification ||
 				ce[ei].CheckDigit != fe[ei].CheckDigit ||
 				ce[ei].DFIAccountNumber != fe[ei].DFIAccountNumber {
@@ -478,31 +480,13 @@ func VerifyConsistency(fixed, cleaned, release *ach.File, held []HeldEntry, poli
 	return nil
 }
 
-// offsetDebitCode maps a credit tran code to the debit code that pulls the
-// same account type back out of the holding account.
-func offsetDebitCode(tran int) (int, error) {
-	switch tran {
-	case ach.CheckingCredit:
-		return ach.CheckingDebit, nil
-	case ach.CheckingPrenoteCredit:
-		return ach.CheckingPrenoteDebit, nil
-	case ach.SavingsCredit:
-		return ach.SavingsDebit, nil
-	case ach.SavingsPrenoteCredit:
-		return ach.SavingsPrenoteDebit, nil
-	case ach.GLCredit:
-		return ach.GLDebit, nil
-	default:
-		return 0, fmt.Errorf("cannot offset non-credit tran code %d", tran)
-	}
-}
-
 // VerifyRelease confirms a release file carries exactly the legs for the held
 // entries it was built from: one credit leg per pending/approved hold moving
 // the exact amount back to the original receiver account/RDFI with its tax
 // id/SSN and a preserved batch header description, plus one summary debit leg
-// per batch pulling the batch's credit total out of the holding account, with
-// the file balanced (total debits == total credits == held total).
+// per batch pulling the batch's credit total out of the holding account with
+// the checking-debit tran code (27), with the file balanced (total debits ==
+// total credits == held total).
 func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) error {
 	if release.Header.ImmediateOrigin != policy.HoldingRDFI {
 		return fmt.Errorf("release file origin %s != holding rdfi %s", release.Header.ImmediateOrigin, policy.HoldingRDFI)
@@ -538,6 +522,9 @@ func VerifyRelease(release *ach.File, held []HeldEntry, policy domain.Policy) er
 			case "D":
 				if leg.RDFIIdentification+leg.CheckDigit != policy.HoldingRDFI || leg.DFIAccountNumber != policy.HoldingAccount {
 					return fmt.Errorf("release debit leg targets %s %s, want holding %s %s", leg.RDFIIdentification+leg.CheckDigit, leg.DFIAccountNumber, policy.HoldingRDFI, policy.HoldingAccount)
+				}
+				if leg.TransactionCode != ach.CheckingDebit {
+					return fmt.Errorf("release debit leg tran %d != checking debit %d", leg.TransactionCode, ach.CheckingDebit)
 				}
 				debitLegs++
 				batchDebits += leg.Amount
@@ -600,4 +587,22 @@ func TotalEntries(file *ach.File) int {
 		n += len(batch.GetEntries())
 	}
 	return n
+}
+
+// SplitTotals sums debit and credit entry amounts (in cents) across all
+// regular batches, using the entry tran code via CreditOrDebit, the same
+// classification VerifyRelease applies to release legs.
+func SplitTotals(file *ach.File) (debitTotal, creditTotal int64, debitN, creditN int) {
+	for _, batch := range file.Batches {
+		for _, e := range batch.GetEntries() {
+			if e.CreditOrDebit() == "D" {
+				debitTotal += int64(e.Amount)
+				debitN++
+			} else {
+				creditTotal += int64(e.Amount)
+				creditN++
+			}
+		}
+	}
+	return debitTotal, creditTotal, debitN, creditN
 }

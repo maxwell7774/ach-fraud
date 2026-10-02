@@ -17,6 +17,7 @@ type Entry struct {
 	Amount         int    // cents
 	RDFI           string // 9-digit routing number
 	Trace          int    // sequence for the trace number
+	TranCode       int    // entry tran code; defaults to checking credit (22) when 0
 }
 
 // CreditFile builds a single-batch PPD credit file with the given entries and
@@ -53,7 +54,10 @@ func CreditFile(entries []Entry, effectiveDate string) ([]byte, error) {
 			return nil, fmt.Errorf("entry %d: rdfi must be 9 digits, got %q", i, e.RDFI)
 		}
 		ed := ach.NewEntryDetail()
-		ed.TransactionCode = ach.CheckingCredit
+		ed.TransactionCode = e.TranCode
+		if ed.TransactionCode == 0 {
+			ed.TransactionCode = ach.CheckingCredit
+		}
 		ed.RDFIIdentification = e.RDFI[:8]
 		ed.CheckDigit = e.RDFI[8:]
 		ed.DFIAccountNumber = e.Account

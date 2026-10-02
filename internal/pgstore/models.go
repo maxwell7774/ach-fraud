@@ -9,13 +9,17 @@ import (
 )
 
 type Artifact struct {
-	ID           pgtype.UUID
-	SubmissionID pgtype.UUID
-	Kind         string
-	Checksum     string
-	State        string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID            pgtype.UUID
+	SubmissionID  pgtype.UUID
+	Kind          string
+	Checksum      string
+	State         string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DebitTotal    pgtype.Int8
+	CreditTotal   pgtype.Int8
+	DebitEntries  pgtype.Int4
+	CreditEntries pgtype.Int4
 }
 
 type BatchEntry struct {

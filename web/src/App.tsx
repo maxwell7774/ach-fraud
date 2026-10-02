@@ -10,13 +10,12 @@ import Submissions from "./pages/Submissions";
 import SubmissionDetail from "./pages/SubmissionDetail";
 import Entries from "./pages/Entries";
 import EntryDetail from "./pages/EntryDetail";
-import Headers from "./pages/Headers";
 import Events from "./pages/Events";
 import Jobs from "./pages/Jobs";
 import Recipients from "./pages/Recipients";
 import { Loading } from "./components";
 import { MenuIcon, XIcon } from "./icons";
-import { setAuthDisabled, setCurrentUser, currentUser, isAdmin, isSuperAdmin } from "./user";
+import { setAuthDisabled, setCurrentUser, currentUser, isSuperAdmin } from "./user";
 import { api } from "./api";
 import { logoutAction } from "./queries";
 
@@ -34,9 +33,8 @@ function Brand() {
 const LINKS = [
   { href: "/", label: "Dashboard", end: true },
   { href: "/holds", label: "Holds" },
-  { href: "/submissions", label: "Files", admin: true },
-  { href: "/entries", label: "Entries", admin: true },
-  { href: "/headers", label: "Headers", admin: true },
+  { href: "/submissions", label: "Files" },
+  { href: "/entries", label: "Entries" },
   { href: "/events", label: "Events", superAdmin: true },
   { href: "/jobs", label: "Jobs", superAdmin: true },
   { href: "/recipients", label: "Recipients", superAdmin: true },
@@ -45,8 +43,7 @@ const LINKS = [
 function Layout(props: { children?: any }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const close = () => setMenuOpen(false);
-  const visibleLinks = () =>
-    LINKS.filter((l) => (!l.admin || isAdmin()) && (!l.superAdmin || isSuperAdmin()));
+  const visibleLinks = () => LINKS.filter((l) => !l.superAdmin || isSuperAdmin());
   const user = currentUser;
   const roleLabel = (r?: string) =>
     r === "super_admin"
@@ -206,7 +203,6 @@ export default function App() {
             <Route path="/submissions/:id" component={SubmissionDetail} />
             <Route path="/entries" component={Entries} />
             <Route path="/entries/:id" component={EntryDetail} />
-            <Route path="/headers" component={Headers} />
             <Route path="/events" component={Events} />
             <Route path="/jobs" component={Jobs} />
             <Route path="/recipients" component={Recipients} />

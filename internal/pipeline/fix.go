@@ -52,15 +52,24 @@ func FixSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) error {
 		return err
 	}
 	fixedSum := checksum.Bytes(fixedData)
+	origDebit, origCredit, origDebitN, origCreditN := achp.SplitTotals(file)
+	fixedDebit, fixedCredit, fixedDebitN, fixedCreditN := achp.SplitTotals(fixed)
 	if err := d.Store.WithArtifactLifecycleLock(ctx, func(tx ports.Store) error {
 		if err := d.Files.Put(ctx, fixedSum, fixedData); err != nil {
 			return err
 		}
+		if err := tx.SetArtifactTotals(ctx, orig.ID, origDebit, origCredit, origDebitN, origCreditN); err != nil {
+			return err
+		}
 		_, err := tx.CreateArtifact(ctx, domain.Artifact{
-			SubmissionID: submissionID,
-			Kind:         domain.ArtifactFixed,
-			Checksum:     fixedSum,
-			State:        domain.ArtifactStaged,
+			SubmissionID:  submissionID,
+			Kind:          domain.ArtifactFixed,
+			Checksum:      fixedSum,
+			State:         domain.ArtifactStaged,
+			DebitTotal:    &fixedDebit,
+			CreditTotal:   &fixedCredit,
+			DebitEntries:  &fixedDebitN,
+			CreditEntries: &fixedCreditN,
 		})
 		return err
 	}); err != nil {

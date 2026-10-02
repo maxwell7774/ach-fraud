@@ -834,9 +834,9 @@ func TestAuthorizationMatrix(t *testing.T) {
 	processor := loginAs(t, s, fe, []string{"ACH.Processor"})
 	admin := loginAs(t, s, fe, []string{"ACH.Admin"})
 
-	// Everyone can view the dashboard and holds.
+	// Everyone can view the dashboard, holds, files, and entries.
 	for _, sess := range []string{watcher, processor, admin} {
-		for _, p := range []string{"/api/dashboard", "/api/holds"} {
+		for _, p := range []string{"/api/dashboard", "/api/holds", "/api/submissions", "/api/entries"} {
 			rr := httptest.NewRecorder()
 			s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), sess))
 			if rr.Code != http.StatusOK {
@@ -845,8 +845,9 @@ func TestAuthorizationMatrix(t *testing.T) {
 		}
 	}
 
-	// Watchers may not approve/decline, and only admins see files/events.
-	for _, p := range []string{"/api/submissions", "/api/events", "/api/jobs"} {
+	// Watchers take no action: no approve/decline, no manual flagging, no raw
+	// bytes, and no events/jobs access.
+	for _, p := range []string{"/api/events", "/api/jobs"} {
 		rr := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", p, nil), watcher))
 		if rr.Code != http.StatusForbidden {
@@ -859,20 +860,20 @@ func TestAuthorizationMatrix(t *testing.T) {
 		t.Fatalf("watcher approve = %d, want 403", rr.Code)
 	}
 
-	// Processors review holds but cannot see files/events.
+	// Processors review holds but cannot manually flag entries or view raw bytes.
 	rr = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+holdID.String()+"/approve", strings.NewReader(`{}`)), processor))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("processor approve = %d %s, want 200", rr.Code, rr.Body.String())
 	}
 	rr = httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/submissions", nil), processor))
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/artifacts/"+holdID.String()+"/content", nil), processor))
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("processor submissions = %d, want 403", rr.Code)
+		t.Fatalf("processor artifact content = %d, want 403", rr.Code)
 	}
 
-	// Admins see files/entries/headers and review holds, but not events or
-	// email-recipient management (super-admin only).
+	// Admins review holds and manually flag entries, but cannot view raw bytes
+	// and cannot see events or manage email recipients (super-admin only).
 	adminHold := seedHold(t, st)
 	rr = httptest.NewRecorder()
 	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/holds/"+adminHold.String()+"/decline", strings.NewReader(`{}`)), admin))
@@ -885,6 +886,11 @@ func TestAuthorizationMatrix(t *testing.T) {
 		if rr.Code != http.StatusOK {
 			t.Fatalf("admin %s = %d, want 200", p, rr.Code)
 		}
+	}
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("GET", "/api/artifacts/"+adminHold.String()+"/content", nil), admin))
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("admin artifact content = %d, want 403", rr.Code)
 	}
 	for _, p := range []string{"/api/events", "/api/recipients", "/api/jobs"} {
 		rr := httptest.NewRecorder()
@@ -914,6 +920,43 @@ func TestAuthorizationMatrix(t *testing.T) {
 		strings.NewReader(`{"email":"a@b.c","alert_types":["pending_holds"]}`)), superAdmin))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("super admin create recipient = %d, want 201", rr.Code)
+	}
+}
+
+func TestEntryHoldIsAdminOnly(t *testing.T) {
+	s, st, fe := testAuthServer(t)
+	ctx := context.Background()
+	sub, err := st.CreateSubmission(ctx, domain.Submission{Filename: "flag.ach", Status: domain.SubmissionReady, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("sub: %v", err)
+	}
+	hdr, err := st.CreateBatchHeader(ctx, domain.BatchHeader{SubmissionID: sub.ID, CustomerID: "c1"})
+	if err != nil {
+		t.Fatalf("hdr: %v", err)
+	}
+	en, err := st.CreateBatchEntry(ctx, domain.BatchEntry{
+		HeaderID: hdr.ID, Rdfi: "231380104", ReceiverAccount: "100000001",
+		Amount: 5000, TranCode: 22, Trace: "t1",
+	})
+	if err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+	flagBody := `{"status":"approved","reason":"manual"}`
+	for _, tc := range []struct {
+		name  string
+		roles []string
+		want  int
+	}{
+		{"watcher", []string{"ACH.Watcher"}, http.StatusForbidden},
+		{"processor", []string{"ACH.Processor"}, http.StatusForbidden},
+		{"admin", []string{"ACH.Admin"}, http.StatusOK},
+	} {
+		cookie := loginAs(t, s, fe, tc.roles)
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, withCookie(httptest.NewRequest("POST", "/api/entries/"+en.ID.String()+"/hold", strings.NewReader(flagBody)), cookie))
+		if rr.Code != tc.want {
+			t.Fatalf("%s flag entry = %d, want %d", tc.name, rr.Code, tc.want)
+		}
 	}
 }
 

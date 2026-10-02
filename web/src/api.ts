@@ -56,6 +56,10 @@ export interface Artifact {
   kind: string;
   checksum: string;
   state: string;
+  debit_total?: number;
+  credit_total?: number;
+  debit_entries?: number;
+  credit_entries?: number;
 }
 
 export interface Job {
@@ -113,16 +117,6 @@ export interface BatchEntry {
   hold_status?: string;
 }
 
-export interface BatchHeader {
-  id: string;
-  submission_id: string;
-  customer_id: string;
-  company_name: string;
-  company_description: string;
-  effective_date?: string;
-  filename: string;
-}
-
 export interface EventRecord {
   id: string;
   type: string;
@@ -171,11 +165,6 @@ export interface EntriesPage {
   total: number;
 }
 
-export interface HeadersPage {
-  headers: BatchHeader[];
-  total: number;
-}
-
 export interface EventsPage {
   events: EventRecord[];
   total: number;
@@ -189,6 +178,10 @@ export interface ArtifactSum {
   present: boolean;
   entries: number;
   total: number;
+  debit_total?: number;
+  credit_total?: number;
+  debit_entries?: number;
+  credit_entries?: number;
   error?: string;
   pruned?: boolean;
 }
@@ -308,7 +301,6 @@ export const api = {
   entry: (id: string) => req<BatchEntry>(`/api/entries/${id}`),
   createEntryHold: (id: string, body: { status?: string; reason: string; actor: string }) =>
     req<{ id: string; status: string }>(`/api/entries/${id}/hold`, { method: "POST", body: JSON.stringify(body) }),
-  headers: (p: ListParams = {}) => req<HeadersPage>(`/api/headers${qs(p)}`),
   artifactContent: (id: string) =>
     fetch(`/api/artifacts/${id}/content`).then((r) => {
       if (!r.ok) throw new Error("failed to load artifact");

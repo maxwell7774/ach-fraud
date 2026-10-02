@@ -103,10 +103,14 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 	cleanedSum := checksum.Bytes(cleanedData)
 
 	type builtRelease struct {
-		sum  string
-		data []byte
-		ids  []uuid.UUID
-		held []achp.HeldEntry
+		sum           string
+		data          []byte
+		ids           []uuid.UUID
+		held          []achp.HeldEntry
+		debitTotal    int64
+		creditTotal   int64
+		debitEntries  int
+		creditEntries int
 	}
 	var releases []builtRelease
 	for _, g := range groups {
@@ -125,7 +129,12 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 		if err := achp.VerifyRelease(rel, g.held, d.Policy); err != nil {
 			return nil, fmt.Errorf("release balance check failed: %w", err)
 		}
-		releases = append(releases, builtRelease{sum: sum, data: data, ids: ids, held: g.held})
+		debit, credit, debitN, creditN := achp.SplitTotals(rel)
+		releases = append(releases, builtRelease{
+			sum: sum, data: data, ids: ids, held: g.held,
+			debitTotal: debit, creditTotal: credit,
+			debitEntries: debitN, creditEntries: creditN,
+		})
 	}
 
 	var relIDs []uuid.UUID
@@ -156,20 +165,29 @@ func ProcessSubmission(ctx context.Context, d Deps, submissionID uuid.UUID) (*Pr
 				return fmt.Errorf("release balance check failed after writing: %w", err)
 			}
 		}
+		cleanedDebit, cleanedCredit, cleanedDebitN, cleanedCreditN := achp.SplitTotals(cleaned)
 		if _, err := tx.CreateArtifact(ctx, domain.Artifact{
-			SubmissionID: submissionID,
-			Kind:         domain.ArtifactCleaned,
-			Checksum:     cleanedSum,
-			State:        domain.ArtifactStaged,
+			SubmissionID:  submissionID,
+			Kind:          domain.ArtifactCleaned,
+			Checksum:      cleanedSum,
+			State:         domain.ArtifactStaged,
+			DebitTotal:    &cleanedDebit,
+			CreditTotal:   &cleanedCredit,
+			DebitEntries:  &cleanedDebitN,
+			CreditEntries: &cleanedCreditN,
 		}); err != nil {
 			return err
 		}
 		for _, r := range releases {
 			rel, err := tx.CreateArtifact(ctx, domain.Artifact{
-				SubmissionID: submissionID,
-				Kind:         domain.ArtifactRelease,
-				Checksum:     r.sum,
-				State:        domain.ArtifactStaged,
+				SubmissionID:  submissionID,
+				Kind:          domain.ArtifactRelease,
+				Checksum:      r.sum,
+				State:         domain.ArtifactStaged,
+				DebitTotal:    &r.debitTotal,
+				CreditTotal:   &r.creditTotal,
+				DebitEntries:  &r.debitEntries,
+				CreditEntries: &r.creditEntries,
 			})
 			if err != nil {
 				return err

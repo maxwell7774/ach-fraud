@@ -28,11 +28,17 @@ type submissionsPage struct {
 }
 
 type artifactSum struct {
-	Present bool   `json:"present"`
-	Entries int    `json:"entries"`
-	Total   int64  `json:"total"`
-	Error   string `json:"error,omitempty"`
-	Pruned  bool   `json:"pruned,omitempty"`
+	Present bool  `json:"present"`
+	Entries int   `json:"entries"`
+	Total   int64 `json:"total"`
+	// Stored debit/credit splits; nil means never computed. Live-computed
+	// from the bytes whenever they are available.
+	DebitTotal    *int64 `json:"debit_total,omitempty"`
+	CreditTotal   *int64 `json:"credit_total,omitempty"`
+	DebitEntries  *int   `json:"debit_entries,omitempty"`
+	CreditEntries *int   `json:"credit_entries,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Pruned        bool   `json:"pruned,omitempty"`
 }
 
 type entryMatch struct {
@@ -143,7 +149,15 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 	var releases []*ach.File
 	pruned := map[domain.ArtifactKind]bool{}
 	for _, a := range arts {
-		sum := artifactSum{Present: true}
+		// Start from the stored splits so pruned artifacts (bytes gone)
+		// still report the totals stamped at creation.
+		sum := artifactSum{
+			Present:       true,
+			DebitTotal:    a.DebitTotal,
+			CreditTotal:   a.CreditTotal,
+			DebitEntries:  a.DebitEntries,
+			CreditEntries: a.CreditEntries,
+		}
 		if a.State == domain.ArtifactPruned {
 			// Bytes are intentionally gone after the retention window; report
 			// it as pruned rather than a failure to read.
@@ -167,6 +181,14 @@ func (s *Server) handleVerifySubmission(w http.ResponseWriter, r *http.Request) 
 		}
 		sum.Entries = achp.TotalEntries(f)
 		sum.Total = artifactTotal(f)
+		debit, credit, debitN, creditN := achp.SplitTotals(f)
+		sum.DebitTotal, sum.CreditTotal = &debit, &credit
+		sum.DebitEntries, sum.CreditEntries = &debitN, &creditN
+		if a.DebitTotal == nil {
+			// Lazy heal: rows stamped before totals existed get them now.
+			// Best-effort; a failure just retries on the next view.
+			_ = s.deps.Store.SetArtifactTotals(ctx, a.ID, debit, credit, debitN, creditN)
+		}
 		sums[string(a.Kind)] = sum
 		if a.Kind == domain.ArtifactRelease {
 			releases = append(releases, f)

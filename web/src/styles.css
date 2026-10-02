@@ -1246,6 +1246,54 @@ th.sort-desc .sort-icon {
   border-top: 1px solid var(--border);
 }
 
+/* Artifact file modal */
+#artifactDlg {
+  border: 1px solid var(--border);
+  padding: 0;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  width: min(960px, 92vw);
+  max-height: 82vh;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+  animation: dialog-in 0.12s ease-out;
+}
+#artifactDlg::backdrop {
+  background: rgba(0, 0, 0, 0);
+  animation: backdrop-in 0.12s ease-out forwards;
+}
+.artifact-head {
+  padding: 18px 24px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.artifact-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.artifact-sub {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.artifact-body {
+  padding: 16px 24px;
+  overflow: auto;
+  max-height: calc(82vh - 160px);
+}
+.artifact-body .file-content {
+  margin-top: 0;
+  border: 0;
+}
+@media (max-width: 640px) {
+  #artifactDlg {
+    width: 96vw;
+    max-height: 90vh;
+  }
+  .artifact-body {
+    max-height: calc(90vh - 160px);
+  }
+}
+
 /* Popovers (row actions, custom select)
    Native popover API anchored to its `popovertarget` invoker; `position-area`
    places each menu against that anchor (Kevin Powell, "Stop wasting time with

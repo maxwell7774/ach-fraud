@@ -64,6 +64,21 @@ func (s *Store) SetArtifactState(ctx context.Context, id uuid.UUID, st domain.Ar
 	return nil
 }
 
+func (s *Store) SetArtifactTotals(ctx context.Context, id uuid.UUID, debitTotal, creditTotal int64, debitEntries, creditEntries int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.arts[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	a.DebitTotal = &debitTotal
+	a.CreditTotal = &creditTotal
+	a.DebitEntries = &debitEntries
+	a.CreditEntries = &creditEntries
+	s.arts[id] = a
+	return nil
+}
+
 func (s *Store) ListArtifactsByStateOlderThan(ctx context.Context, state domain.ArtifactState, cutoff time.Time) ([]domain.Artifact, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

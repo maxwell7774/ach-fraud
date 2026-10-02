@@ -42,6 +42,7 @@ type Store interface {
 	GetArtifactByID(ctx context.Context, id uuid.UUID) (domain.Artifact, error)
 	ListArtifactsBySubmission(ctx context.Context, submissionID uuid.UUID) ([]domain.Artifact, error)
 	SetArtifactState(ctx context.Context, id uuid.UUID, st domain.ArtifactState) error
+	SetArtifactTotals(ctx context.Context, id uuid.UUID, debitTotal, creditTotal int64, debitEntries, creditEntries int) error
 
 	// Batches
 	CreateBatchHeader(ctx context.Context, h domain.BatchHeader) (domain.BatchHeader, error)

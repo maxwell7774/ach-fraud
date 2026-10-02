@@ -4,7 +4,7 @@ import { dollars, fmtDate, human } from "../api";
 import { Loading, QueryError, Select, Badge } from "../components";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
-import { isAdmin } from "../user";
+import { canFlagEntry } from "../user";
 import { entryQuery, createEntryHoldAction, usePolling } from "../queries";
 import { ArrowLeftIcon } from "../icons";
 
@@ -119,7 +119,7 @@ export default function EntryDetail() {
             </div>
           </Show>
 
-          <Show when={!e().hold_id && isAdmin()}>
+          <Show when={!e().hold_id && canFlagEntry()}>
             <div class="detail-card">
               <h2>Create hold</h2>
               <p class="section-note">

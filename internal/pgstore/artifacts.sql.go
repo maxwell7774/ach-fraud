@@ -12,16 +12,20 @@ import (
 )
 
 const createArtifact = `-- name: CreateArtifact :one
-INSERT INTO artifacts(submission_id, kind, checksum, state)
-VALUES ($1, $2, $3, $4)
-RETURNING id, submission_id, kind, checksum, state, created_at, updated_at
+INSERT INTO artifacts(submission_id, kind, checksum, state, debit_total, credit_total, debit_entries, credit_entries)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries
 `
 
 type CreateArtifactParams struct {
-	SubmissionID pgtype.UUID
-	Kind         string
-	Checksum     string
-	State        string
+	SubmissionID  pgtype.UUID
+	Kind          string
+	Checksum      string
+	State         string
+	DebitTotal    pgtype.Int8
+	CreditTotal   pgtype.Int8
+	DebitEntries  pgtype.Int4
+	CreditEntries pgtype.Int4
 }
 
 func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error) {
@@ -30,6 +34,10 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		arg.Kind,
 		arg.Checksum,
 		arg.State,
+		arg.DebitTotal,
+		arg.CreditTotal,
+		arg.DebitEntries,
+		arg.CreditEntries,
 	)
 	var i Artifact
 	err := row.Scan(
@@ -40,12 +48,16 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DebitTotal,
+		&i.CreditTotal,
+		&i.DebitEntries,
+		&i.CreditEntries,
 	)
 	return i, err
 }
 
 const getArtifactByID = `-- name: GetArtifactByID :one
-SELECT id, submission_id, kind, checksum, state, created_at, updated_at FROM artifacts WHERE id = $1
+SELECT id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries FROM artifacts WHERE id = $1
 `
 
 func (q *Queries) GetArtifactByID(ctx context.Context, id pgtype.UUID) (Artifact, error) {
@@ -59,12 +71,16 @@ func (q *Queries) GetArtifactByID(ctx context.Context, id pgtype.UUID) (Artifact
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DebitTotal,
+		&i.CreditTotal,
+		&i.DebitEntries,
+		&i.CreditEntries,
 	)
 	return i, err
 }
 
 const getArtifactBySubmissionKind = `-- name: GetArtifactBySubmissionKind :one
-SELECT id, submission_id, kind, checksum, state, created_at, updated_at FROM artifacts WHERE submission_id = $1 AND kind = $2
+SELECT id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries FROM artifacts WHERE submission_id = $1 AND kind = $2
 `
 
 type GetArtifactBySubmissionKindParams struct {
@@ -83,12 +99,16 @@ func (q *Queries) GetArtifactBySubmissionKind(ctx context.Context, arg GetArtifa
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DebitTotal,
+		&i.CreditTotal,
+		&i.DebitEntries,
+		&i.CreditEntries,
 	)
 	return i, err
 }
 
 const listArtifactsByChecksum = `-- name: ListArtifactsByChecksum :many
-SELECT id, submission_id, kind, checksum, state, created_at, updated_at FROM artifacts WHERE checksum = $1 ORDER BY created_at
+SELECT id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries FROM artifacts WHERE checksum = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListArtifactsByChecksum(ctx context.Context, checksum string) ([]Artifact, error) {
@@ -108,6 +128,10 @@ func (q *Queries) ListArtifactsByChecksum(ctx context.Context, checksum string) 
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DebitTotal,
+			&i.CreditTotal,
+			&i.DebitEntries,
+			&i.CreditEntries,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +144,7 @@ func (q *Queries) ListArtifactsByChecksum(ctx context.Context, checksum string) 
 }
 
 const listArtifactsByStateOlderThan = `-- name: ListArtifactsByStateOlderThan :many
-SELECT id, submission_id, kind, checksum, state, created_at, updated_at FROM artifacts
+SELECT id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries FROM artifacts
 WHERE state = $1 AND updated_at < $2
 ORDER BY updated_at
 `
@@ -147,6 +171,10 @@ func (q *Queries) ListArtifactsByStateOlderThan(ctx context.Context, arg ListArt
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DebitTotal,
+			&i.CreditTotal,
+			&i.DebitEntries,
+			&i.CreditEntries,
 		); err != nil {
 			return nil, err
 		}
@@ -159,7 +187,7 @@ func (q *Queries) ListArtifactsByStateOlderThan(ctx context.Context, arg ListArt
 }
 
 const listArtifactsBySubmission = `-- name: ListArtifactsBySubmission :many
-SELECT id, submission_id, kind, checksum, state, created_at, updated_at FROM artifacts WHERE submission_id = $1 ORDER BY created_at
+SELECT id, submission_id, kind, checksum, state, created_at, updated_at, debit_total, credit_total, debit_entries, credit_entries FROM artifacts WHERE submission_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListArtifactsBySubmission(ctx context.Context, submissionID pgtype.UUID) ([]Artifact, error) {
@@ -179,6 +207,10 @@ func (q *Queries) ListArtifactsBySubmission(ctx context.Context, submissionID pg
 			&i.State,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DebitTotal,
+			&i.CreditTotal,
+			&i.DebitEntries,
+			&i.CreditEntries,
 		); err != nil {
 			return nil, err
 		}
@@ -201,5 +233,30 @@ type SetArtifactStateParams struct {
 
 func (q *Queries) SetArtifactState(ctx context.Context, arg SetArtifactStateParams) error {
 	_, err := q.db.Exec(ctx, setArtifactState, arg.State, arg.ID)
+	return err
+}
+
+const setArtifactTotals = `-- name: SetArtifactTotals :exec
+UPDATE artifacts
+SET debit_total = $1, credit_total = $2, debit_entries = $3, credit_entries = $4
+WHERE id = $5
+`
+
+type SetArtifactTotalsParams struct {
+	DebitTotal    pgtype.Int8
+	CreditTotal   pgtype.Int8
+	DebitEntries  pgtype.Int4
+	CreditEntries pgtype.Int4
+	ID            pgtype.UUID
+}
+
+func (q *Queries) SetArtifactTotals(ctx context.Context, arg SetArtifactTotalsParams) error {
+	_, err := q.db.Exec(ctx, setArtifactTotals,
+		arg.DebitTotal,
+		arg.CreditTotal,
+		arg.DebitEntries,
+		arg.CreditEntries,
+		arg.ID,
+	)
 	return err
 }

@@ -11,10 +11,14 @@ import (
 
 func (s *Store) CreateArtifact(ctx context.Context, in domain.Artifact) (domain.Artifact, error) {
 	row, err := s.q.CreateArtifact(ctx, CreateArtifactParams{
-		SubmissionID: toPgUUID(in.SubmissionID),
-		Kind:         string(in.Kind),
-		Checksum:     in.Checksum,
-		State:        string(in.State),
+		SubmissionID:  toPgUUID(in.SubmissionID),
+		Kind:          string(in.Kind),
+		Checksum:      in.Checksum,
+		State:         string(in.State),
+		DebitTotal:    toPgInt8(in.DebitTotal),
+		CreditTotal:   toPgInt8(in.CreditTotal),
+		DebitEntries:  toPgInt4(in.DebitEntries),
+		CreditEntries: toPgInt4(in.CreditEntries),
 	})
 	if err != nil {
 		return domain.Artifact{}, err
@@ -60,6 +64,16 @@ func (s *Store) SetArtifactState(ctx context.Context, id uuid.UUID, st domain.Ar
 	})
 }
 
+func (s *Store) SetArtifactTotals(ctx context.Context, id uuid.UUID, debitTotal, creditTotal int64, debitEntries, creditEntries int) error {
+	return s.q.SetArtifactTotals(ctx, SetArtifactTotalsParams{
+		DebitTotal:    toPgInt8(&debitTotal),
+		CreditTotal:   toPgInt8(&creditTotal),
+		DebitEntries:  toPgInt4(&debitEntries),
+		CreditEntries: toPgInt4(&creditEntries),
+		ID:            toPgUUID(id),
+	})
+}
+
 func (s *Store) ListArtifactsByStateOlderThan(ctx context.Context, state domain.ArtifactState, cutoff time.Time) ([]domain.Artifact, error) {
 	rows, err := s.q.ListArtifactsByStateOlderThan(ctx, ListArtifactsByStateOlderThanParams{
 		State:     string(state),
@@ -89,10 +103,14 @@ func (s *Store) ListArtifactsByChecksum(ctx context.Context, checksum string) ([
 
 func toDomainArtifact(a Artifact) domain.Artifact {
 	return domain.Artifact{
-		ID:           toUUID(a.ID),
-		SubmissionID: toUUID(a.SubmissionID),
-		Kind:         domain.ArtifactKind(a.Kind),
-		Checksum:     a.Checksum,
-		State:        domain.ArtifactState(a.State),
+		ID:            toUUID(a.ID),
+		SubmissionID:  toUUID(a.SubmissionID),
+		Kind:          domain.ArtifactKind(a.Kind),
+		Checksum:      a.Checksum,
+		State:         domain.ArtifactState(a.State),
+		DebitTotal:    fromPgInt8(a.DebitTotal),
+		CreditTotal:   fromPgInt8(a.CreditTotal),
+		DebitEntries:  fromPgInt4(a.DebitEntries),
+		CreditEntries: fromPgInt4(a.CreditEntries),
 	}
 }

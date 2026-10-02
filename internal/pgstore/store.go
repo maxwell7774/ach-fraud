@@ -146,4 +146,34 @@ func toPgDatePtr(t *time.Time) pgtype.Date {
 	return toPgDate(t)
 }
 
+func toPgInt8(v *int64) pgtype.Int8 {
+	if v == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *v, Valid: true}
+}
+
+func fromPgInt8(v pgtype.Int8) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	out := v.Int64
+	return &out
+}
+
+func toPgInt4(v *int) pgtype.Int4 {
+	if v == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*v), Valid: true}
+}
+
+func fromPgInt4(v pgtype.Int4) *int {
+	if !v.Valid {
+		return nil
+	}
+	out := int(v.Int32)
+	return &out
+}
+
 var _ ports.Store = (*Store)(nil)

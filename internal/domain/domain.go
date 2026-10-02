@@ -46,6 +46,13 @@ type Artifact struct {
 	Kind         ArtifactKind  `json:"kind"`
 	Checksum     string        `json:"checksum"`
 	State        ArtifactState `json:"state"`
+	// Debit/credit splits in cents, computed from the file bytes at creation.
+	// Nil means never computed (pre-migration rows, or an original artifact
+	// awaiting fix); a genuine zero is stored as 0.
+	DebitTotal    *int64 `json:"debit_total,omitempty"`
+	CreditTotal   *int64 `json:"credit_total,omitempty"`
+	DebitEntries  *int   `json:"debit_entries,omitempty"`
+	CreditEntries *int   `json:"credit_entries,omitempty"`
 }
 
 // ArtifactKind identifies the variants a submission produces.
@@ -190,9 +197,11 @@ type User struct {
 }
 
 // User roles, canonical values stored on users.role. Least privilege is the
-// default: unknown/new users are watchers. SuperAdmin is the only role that
-// sees events and manages email alert recipients; Admin covers the rest of the
-// admin surface (files, entries, headers, artifacts).
+// default: unknown/new users are watchers. Every role may view the dashboard,
+// holds, files, and entries; capabilities differ only by action: processors
+// and admins may review holds, only admins may manually flag entries, and only
+// super admins may view raw ACH bytes, see events, manage email alert
+// recipients, and requeue failed jobs.
 const (
 	RoleWatcher    = "watcher"
 	RoleProcessor  = "processor"
@@ -205,7 +214,19 @@ func (u User) CanReview() bool {
 	return u.Role == RoleProcessor || u.Role == RoleAdmin || u.Role == RoleSuperAdmin
 }
 
-// IsAdmin reports whether the role may see files, entries, headers, artifacts.
+// CanFlagEntry reports whether the role may manually flag an entry for
+// review. Processors cannot; admins and super admins can.
+func (u User) CanFlagEntry() bool {
+	return u.Role == RoleAdmin || u.Role == RoleSuperAdmin
+}
+
+// CanViewRaw reports whether the role may view raw ACH file bytes. Only
+// super admins can.
+func (u User) CanViewRaw() bool {
+	return u.Role == RoleSuperAdmin
+}
+
+// IsAdmin reports whether the role is an admin or super admin.
 func (u User) IsAdmin() bool {
 	return u.Role == RoleAdmin || u.Role == RoleSuperAdmin
 }

@@ -1,12 +1,13 @@
-import { createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { useParams, A, useAction, createAsync, revalidate } from "@solidjs/router";
 import { submissionQuery, verifyQuery, requeueJobAction, usePolling } from "../queries";
 import { api, dollars, fmtDateTime, type Job } from "../api";
-import { Badge, EmptyState, FileViewer, HoldTable, Loading, Pagination, PageHeader, QueryError } from "../components";
+import { Badge, EmptyState, HoldTable, Loading, Pagination, PageHeader, QueryError } from "../components";
+import ArtifactFileModal from "../ArtifactModal";
 import { ArrowLeftIcon } from "../icons";
 import { useFlash } from "../flash";
 import { useConfirm } from "../confirm";
-import { isSuperAdmin } from "../user";
+import { canViewRaw, isSuperAdmin } from "../user";
 
 export default function SubmissionDetail() {
   const { remaining } = usePolling("submission", "verify");
@@ -38,22 +39,43 @@ export default function SubmissionDetail() {
   const [content, setContent] = createSignal("");
   const [artifactError, setArtifactError] = createSignal("");
   const [artifactLoading, setArtifactLoading] = createSignal(false);
+  const contentCache = new Map<string, string>();
+  const viewingArtifact = createMemo(() => {
+    const a = sub()?.artifacts.find((x) => x.id === viewing());
+    if (!a) return null;
+    return { ...a, filename: sub()?.filename ?? "" };
+  });
+  // Headline totals: fixed file when processed, else the ingested original.
+  const headline = createMemo(() => {
+    const arts = sub()?.artifacts ?? [];
+    return arts.find((a) => a.kind === "fixed") ?? arts.find((a) => a.kind === "original") ?? null;
+  });
+
+  function totalLabel(total?: number, n?: number) {
+    return total === undefined ? "—" : `${dollars(total)} (${n ?? 0})`;
+  }
 
   async function viewArtifact(id: string) {
-    if (viewing() === id) {
-      setViewing(null);
-      return;
-    }
     setViewing(id);
     setArtifactError("");
+    const cached = contentCache.get(id);
+    if (cached !== undefined) {
+      setContent(cached);
+      setArtifactLoading(false);
+      return;
+    }
     setArtifactLoading(true);
     try {
-      setContent(await api.artifactContent(id));
+      const text = await api.artifactContent(id);
+      contentCache.set(id, text);
+      if (viewing() === id) setContent(text);
     } catch (e) {
-      setContent("");
-      setArtifactError(e instanceof Error ? e.message : "failed to load artifact");
+      if (viewing() === id) {
+        setContent("");
+        setArtifactError(e instanceof Error ? e.message : "failed to load artifact");
+      }
     } finally {
-      setArtifactLoading(false);
+      if (viewing() === id) setArtifactLoading(false);
     }
   }
 
@@ -92,6 +114,10 @@ export default function SubmissionDetail() {
               <div class="val">{fmtDateTime(s().received_at)}</div>
               <div class="key">Source checksum</div>
               <div class="val">{s().source_checksum}</div>
+              <div class="key">Debit total</div>
+              <div class="val">{totalLabel(headline()?.debit_total, headline()?.debit_entries)}</div>
+              <div class="key">Credit total</div>
+              <div class="val">{totalLabel(headline()?.credit_total, headline()?.credit_entries)}</div>
             </div>
           </div>
 
@@ -116,9 +142,11 @@ export default function SubmissionDetail() {
                       </td>
                       <td data-label="Checksum" class="muted">{a.checksum}</td>
                       <td data-label="Content">
-                        <button class="btn btn-outline btn-sm" onClick={() => viewArtifact(a.id)}>
-                          {viewing() === a.id ? "Hide" : "View"}
-                        </button>
+                        <Show when={canViewRaw()} fallback={<span class="muted">—</span>}>
+                          <button class="btn btn-outline btn-sm" onClick={() => viewArtifact(a.id)}>
+                            View
+                          </button>
+                        </Show>
                       </td>
                     </tr>
                   )}
@@ -126,13 +154,13 @@ export default function SubmissionDetail() {
               </tbody>
             </table>
           </div>
-          <Show when={viewing()}>
-            <Show when={!artifactLoading()} fallback={<Loading label="Loading artifact…" />}>
-              <Show when={!artifactError()} fallback={<p class="error issue">{artifactError()}</p>}>
-                <FileViewer content={content()} />
-              </Show>
-            </Show>
-          </Show>
+          <ArtifactFileModal
+            artifact={viewingArtifact()}
+            content={content()}
+            loading={artifactLoading()}
+            error={artifactError()}
+            onClose={() => setViewing(null)}
+          />
 
           <h2 class="section">Verification</h2>
           <Show when={s().verification} fallback={<p class="empty">No automated verification recorded yet.</p>}>
@@ -170,6 +198,12 @@ export default function SubmissionDetail() {
                                 a.present ? (
                                   <>
                                     {a.entries} entries · {dollars(a.total)}
+                                    <Show when={a.debit_total !== undefined || a.credit_total !== undefined}>
+                                      <div class="cell-sub">
+                                        debits {totalLabel(a.debit_total, a.debit_entries)} · credits{" "}
+                                        {totalLabel(a.credit_total, a.credit_entries)}
+                                      </div>
+                                    </Show>
                                   </>
                                 ) : (
                                   <span class="muted">missing</span>
@@ -177,6 +211,12 @@ export default function SubmissionDetail() {
                               }
                             >
                               <span class="muted">pruned (retention)</span>
+                              <Show when={a.debit_total !== undefined || a.credit_total !== undefined}>
+                                <div class="cell-sub">
+                                  debits {totalLabel(a.debit_total, a.debit_entries)} · credits{" "}
+                                  {totalLabel(a.credit_total, a.credit_entries)}
+                                </div>
+                              </Show>
                             </Show>
                             <Show when={a.error}>
                               <span class="muted"> ({a.error})</span>
